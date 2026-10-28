@@ -91,7 +91,11 @@ func (OIDC) GetUser(r *http.Request, getAd bool) (*rbac.User, error) {
 
 func userFromToken(ctx context.Context, auth string) (*rbac.UserInfo, error) {
 	user := &rbac.UserInfo{}
-	parser := jwt.NewParser(jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}))
+	// Time claims are checked by validateSessionLifetime with a shared skew policy.
+	parser := jwt.NewParser(
+		jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}),
+		jwt.WithoutClaimsValidation(),
+	)
 	token, err := parser.ParseWithClaims(auth, user, func(t *jwt.Token) (interface{}, error) {
 		return jwtKey, nil
 	})
@@ -105,10 +109,6 @@ func userFromToken(ctx context.Context, auth string) (*rbac.UserInfo, error) {
 		err := fmt.Errorf("%s", msg)
 		log.SWithContext(ctx).Error(msg)
 		return nil, err
-	}
-	if e := c.Valid(); e != nil {
-		log.SWithContext(ctx).Errorf("failed to validate token")
-		return nil, e
 	}
 	if e := validateSessionLifetime(c, time.Now()); e != nil {
 		log.SWithContext(ctx).Errorf("failed to validate token: %v", e)

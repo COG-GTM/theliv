@@ -218,6 +218,19 @@ func TestSessionTokenValidation(t *testing.T) {
 	}
 }
 
+func TestSessionIssuedByLeadingReplicaAccepted(t *testing.T) {
+	useTestKey(t)
+	now := time.Now()
+	iat := now.Add(30 * time.Second)
+	token := signSession(t, jwt.SigningMethodHS256, sessionUser(iat.Unix(), iat.Add(sessionTTL).Unix()))
+
+	r := requestWithSession(token)
+	_, err := CheckAuthorization(r)
+	assert.NoError(t, err)
+	_, err = OIDC{}.GetUser(r, true)
+	assert.NoError(t, err)
+}
+
 func TestCheckAuthorizationWithoutCookie(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "http://"+testHost+"/theliv-api/v1/clusters", nil)
 	_, err := CheckAuthorization(r)
