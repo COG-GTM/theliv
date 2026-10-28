@@ -50,6 +50,10 @@ func addGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := service.AddGroup(cluster, namespace, adgroups.AdGroups); err != nil {
+		if service.IsInvalidInput(err) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		http.Error(w, SERVICE_UNAVAILABLE, http.StatusServiceUnavailable)
 		return
 	}

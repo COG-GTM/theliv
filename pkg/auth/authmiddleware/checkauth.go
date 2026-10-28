@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/fidelity/theliv/internal/rbac"
 	"github.com/fidelity/theliv/pkg/config"
 	"github.com/fidelity/theliv/pkg/database/etcd"
 )
@@ -60,22 +61,9 @@ func checkRBAC(r *http.Request) (bool, error) {
 	} else {
 		return false, err
 	}
-	roles, err := getRole(r.Context(), user.UID)
+	grantPath, err := grantedPathsForUser(r.Context(), user)
 	if err != nil {
 		return false, err
-	}
-	adgroups := user.AdGroups
-
-	roles = append(roles, adgroups...)
-	var grantPath []string
-	for _, role := range roles {
-		path, err := getPath(r.Context(), role)
-		if err != nil {
-			return false, err
-		}
-		if path != nil {
-			grantPath = append(grantPath, path...)
-		}
 	}
 	if len(grantPath) < 1 {
 		return false, nil
@@ -85,6 +73,67 @@ func checkRBAC(r *http.Request) (bool, error) {
 		return false, err
 	}
 	return matched, err
+}
+
+// GrantedPaths returns every path pattern granted to the user of the request,
+// through the user's own roles and AD groups.
+func GrantedPaths(r *http.Request) ([]string, error) {
+	user, err := GetUser(r, true)
+	if err != nil {
+		return nil, err
+	}
+	return grantedPathsForUser(r.Context(), user)
+}
+
+func grantedPathsForUser(ctx context.Context, user *rbac.User) ([]string, error) {
+	roles, err := getRole(ctx, user.UID)
+	if err != nil {
+		return nil, err
+	}
+	roles = append(roles, user.AdGroups...)
+	var grantPath []string
+	for _, role := range roles {
+		path, err := getPath(ctx, role)
+		if err != nil {
+			return nil, err
+		}
+		if path != nil {
+			grantPath = append(grantPath, path...)
+		}
+	}
+	return grantPath, nil
+}
+
+// GrantCovers reports whether every request path matched by the pattern
+// requested is also matched (see KeyMatch) by at least one of grants,
+// i.e. whether a holder of grants may delegate requested.
+func GrantCovers(grants []string, requested string) bool {
+	reqPrefix, reqWildcard := wildcardPrefix(CleanString(requested))
+	for _, grant := range grants {
+		grant = CleanString(grant)
+		if grant == "" {
+			continue
+		}
+		grantPrefix, grantWildcard := wildcardPrefix(grant)
+		if !grantWildcard {
+			if !reqWildcard && reqPrefix == grant {
+				return true
+			}
+			continue
+		}
+		if strings.HasPrefix(reqPrefix, grantPrefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func wildcardPrefix(p string) (string, bool) {
+	i := strings.Index(p, "*")
+	if i == -1 {
+		return p, false
+	}
+	return p[:i], true
 }
 
 // check any of string match any of the pattern

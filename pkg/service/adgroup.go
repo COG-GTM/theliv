@@ -24,6 +24,11 @@ func AddGroup(cluster string, namespace string, roles []string) (err error) {
 	newPath := getPath(cluster, namespace)
 
 	for _, role := range roles {
+		if err = validateGrant(role, newPath); err != nil {
+			return
+		}
+	}
+	for _, role := range roles {
 		if err = AddPath(role, newPath); err != nil {
 			return
 		}
