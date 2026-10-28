@@ -67,6 +67,9 @@ type ThelivConfig struct {
 	EventDriver         LogDriverType `json:"eventDriver,omitempty"`
 	LogDeeplinkDriver   LogDriverType `json:"logDeeplinkDriver,omitempty"`
 	EventDeeplinkDriver LogDriverType `json:"eventDeeplinkDriver,omitempty"`
+	// Optional allowlist of cluster API server domains accepted by /register,
+	// e.g. ["eks.amazonaws.com"]. Subdomains match. Empty allows any public hostname.
+	ClusterUrlAllowedDomains []string `json:"clusterUrlAllowedDomains,omitempty"`
 	// Only for UI usage
 	EmailAddr       string `json:"emailAddr,omitempty"`
 	DevelopedByTeam string `json:"developedByTeam,omitempty"`
