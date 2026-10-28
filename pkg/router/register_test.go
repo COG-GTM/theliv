@@ -103,6 +103,9 @@ func TestValidateClusterFields(t *testing.T) {
 	if err := validateClusterFields(ok); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	if err := validateClusterFields(service.ClusterBasic{Token: "abc:def"}); err != nil {
+		t.Fatalf("colon token should be accepted, got %v", err)
+	}
 	if err := validateClusterFields(service.ClusterBasic{}); err != nil {
 		t.Fatalf("empty fields should only be logged, got %v", err)
 	}
@@ -111,6 +114,8 @@ func TestValidateClusterFields(t *testing.T) {
 		{Url: "https://abc.eks.amazonaws.com", CA: "Y2E=\nusers:"},
 		{Url: "https://abc.eks.amazonaws.com", Account: `1", "role": "x`},
 		{Url: "https://abc.eks.amazonaws.com", Token: "!foo"},
+		{Url: "https://abc.eks.amazonaws.com", Token: "abc:"},
+		{Url: "https://abc.eks.amazonaws.com", Token: ":abc"},
 		{Url: "https://abc.eks.amazonaws.com", CA: "Y2E=:x"},
 		{Url: "https://abc.eks.amazonaws.com", Account: "123456789012", Region: `x", "role": "y`},
 		{Url: "http://abc.eks.amazonaws.com"},
