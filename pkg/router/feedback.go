@@ -7,16 +7,31 @@ package router
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
+	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/fidelity/theliv/internal/rbac"
 	"github.com/fidelity/theliv/pkg/auth/authmiddleware"
 	"github.com/fidelity/theliv/pkg/database/etcd"
+	theliverr "github.com/fidelity/theliv/pkg/err"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/render"
+)
+
+const (
+	feedbackKeyPrefix = "/theliv/feedbacks/"
+
+	maxFeedbackBodyBytes  = 16 << 10
+	maxFeedbackMessageLen = 2000
+	maxStoredFeedbacks    = 5000
+	feedbackTTL           = 90 * 24 * time.Hour
+	feedbackInterval      = time.Minute
 )
 
 type FeebackData struct {
@@ -28,37 +43,116 @@ type Feedback struct {
 	Message string `json:"message"`
 }
 
+var (
+	feedbackNow     = time.Now
+	feedbackUser    = authmiddleware.GetUser
+	countFeedbacks  = etcd.CountWithPrefix
+	putFeedback     = etcd.PutWithTTL
+	feedbackLimiter = newSubmissionLimiter(feedbackInterval)
+)
+
 func SubmitFeedback(r chi.Router) {
 	r.Post("/", func(w http.ResponseWriter, r *http.Request) {
+		user, err := feedbackUser(r, false)
+		if err != nil || user == nil {
+			feedbackError(w, r, http.StatusUnauthorized, "unable to identify the current user")
+			return
+		}
+
 		var d Feedback
-		err := json.NewDecoder(r.Body).Decode(&d)
+		r.Body = http.MaxBytesReader(w, r.Body, maxFeedbackBodyBytes)
+		if err := json.NewDecoder(r.Body).Decode(&d); err != nil {
+			var tooLarge *http.MaxBytesError
+			if errors.As(err, &tooLarge) {
+				feedbackError(w, r, http.StatusRequestEntityTooLarge,
+					fmt.Sprintf("request body must not exceed %d bytes", maxFeedbackBodyBytes))
+				return
+			}
+			feedbackError(w, r, http.StatusBadRequest, "request body must be a JSON object with a message")
+			return
+		}
+		if strings.TrimSpace(d.Message) == "" {
+			feedbackError(w, r, http.StatusBadRequest, "message must not be empty")
+			return
+		}
+		if utf8.RuneCountInString(d.Message) > maxFeedbackMessageLen {
+			feedbackError(w, r, http.StatusBadRequest,
+				fmt.Sprintf("message must not exceed %d characters", maxFeedbackMessageLen))
+			return
+		}
+
+		currentTime := feedbackNow()
+		if !feedbackLimiter.allow(userKey(user), currentTime) {
+			w.Header().Set("Retry-After", strconv.Itoa(int(feedbackInterval/time.Second)))
+			feedbackError(w, r, http.StatusTooManyRequests, "only one feedback submission per minute is allowed")
+			return
+		}
+
+		stored, err := countFeedbacks(r.Context(), feedbackKeyPrefix)
 		if err != nil {
 			processError(w, r, err)
+			return
 		}
-		currentTime := time.Now()
-		timestr := getTimeStr(currentTime)
-
-		key := "/theliv/feedbacks/" + timestr
-
-		user, err := authmiddleware.GetUser(r, false)
-		if err != nil {
-			processError(w, r, err)
+		if stored >= maxStoredFeedbacks {
+			feedbackError(w, r, http.StatusServiceUnavailable, "feedback storage is full, please try again later")
+			return
 		}
+
+		key := feedbackKeyPrefix + getTimeStr(currentTime)
 		data := FeebackData{
 			User:    user,
 			Time:    currentTime,
 			Message: d.Message,
 		}
-
-		err = etcd.Put(key, data)
-		if err != nil {
+		if err := putFeedback(r.Context(), key, data, feedbackTTL); err != nil {
 			processError(w, r, err)
-		} else {
-			s := "Feedback received."
-			render.JSON(w, r, s)
+			return
 		}
+		render.JSON(w, r, "Feedback received.")
 	})
 
+}
+
+func feedbackError(w http.ResponseWriter, r *http.Request, status int, msg string) {
+	w.WriteHeader(status)
+	render.JSON(w, r, theliverr.CommonError{Kind: theliverr.API, Message: msg})
+}
+
+func userKey(user *rbac.User) string {
+	switch {
+	case user.UID != "":
+		return "uid:" + user.UID
+	case user.Emailaddress != "":
+		return "email:" + user.Emailaddress
+	default:
+		return "name:" + user.Displayname
+	}
+}
+
+// submissionLimiter allows one submission per interval for each key.
+type submissionLimiter struct {
+	mu       sync.Mutex
+	interval time.Duration
+	last     map[string]time.Time
+}
+
+func newSubmissionLimiter(interval time.Duration) *submissionLimiter {
+	return &submissionLimiter{interval: interval, last: make(map[string]time.Time)}
+}
+
+func (l *submissionLimiter) allow(key string, now time.Time) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if t, ok := l.last[key]; ok && now.Sub(t) < l.interval {
+		return false
+	}
+	for k, t := range l.last {
+		if now.Sub(t) >= l.interval {
+			delete(l.last, k)
+		}
+	}
+	l.last[key] = now
+	return true
 }
 
 func getTimeStr(currentTime time.Time) string {

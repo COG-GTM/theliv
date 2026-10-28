@@ -95,6 +95,32 @@ func Put(key string, value interface{}) error {
 	return PutStr(key, string(c))
 }
 
+// Marshall the value (struct) and put to etcd under a lease, so the key expires after ttl
+func PutWithTTL(ctx context.Context, key string, value interface{}, ttl time.Duration) error {
+	c, err := json.Marshal(value)
+	if err != nil {
+		log.SWithContext(ctx).Errorf("Failed to marshall %v\n", value)
+		return err
+	}
+	lease, err := client.Grant(ctx, int64(ttl/time.Second))
+	if err != nil {
+		log.SWithContext(ctx).Errorf("Failed to grant lease for %v, error is %v\n", key, err)
+		return err
+	}
+	_, err = client.Put(ctx, key, string(c), clientv3.WithLease(lease.ID))
+	return err
+}
+
+// Count keys with prefix, without fetching keys or values
+func CountWithPrefix(ctx context.Context, prefix string) (int64, error) {
+	res, err := client.Get(ctx, prefix, clientv3.WithPrefix(), clientv3.WithCountOnly())
+	if err != nil {
+		log.SWithContext(ctx).Errorf("Failed to count keys with prefix %v, error is %v\n", prefix, err)
+		return 0, err
+	}
+	return res.Count, nil
+}
+
 // Get keys only with prefix
 func GetKeys(ctx context.Context, prefix string) ([]string, error) {
 	// client := newClient()
