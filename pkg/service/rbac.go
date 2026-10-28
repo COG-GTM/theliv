@@ -7,7 +7,10 @@ package service
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
+	"unicode"
 
 	auth "github.com/fidelity/theliv/pkg/auth/authmiddleware"
 	"github.com/fidelity/theliv/pkg/database/etcd"
@@ -15,11 +18,35 @@ import (
 
 const SEPARATOR = ","
 
+var ErrInvalidGrant = errors.New("invalid grant path")
+
+// ValidateGrant rejects grant paths that would not round-trip through the
+// comma-separated role value or that would grant more than a path prefix.
+// A grant must start with "/", must not contain the separator or whitespace,
+// and may only use "*" as its final character.
+func ValidateGrant(path string) error {
+	if !strings.HasPrefix(path, "/") {
+		return fmt.Errorf("%w %q: must start with /", ErrInvalidGrant, path)
+	}
+	if strings.ContainsFunc(path, func(r rune) bool { return r == ',' || unicode.IsSpace(r) || unicode.IsControl(r) }) {
+		return fmt.Errorf("%w %q: must not contain commas or whitespace", ErrInvalidGrant, path)
+	}
+	if i := strings.Index(path, "*"); i != -1 && i != len(path)-1 {
+		return fmt.Errorf("%w %q: * is only allowed at the end", ErrInvalidGrant, path)
+	}
+	return nil
+}
+
 // This function will insert new Role kv into database, if key not found.
 // If KV exists in database, append newly added path.
 // Value in database is string format, a collection seperated by ",".
 // If database operation failed, return error, else return nil.
 func AddPath(roleName string, newPaths []string) (err error) {
+	for _, p := range newPaths {
+		if err = ValidateGrant(p); err != nil {
+			return
+		}
+	}
 	var updatedValue []string
 	var value []byte
 	rolePath := auth.RolePrefix + roleName

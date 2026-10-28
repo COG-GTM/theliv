@@ -7,6 +7,7 @@ package router
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 
@@ -51,6 +52,10 @@ func addPath(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := service.AddPath(roleName, paths.Paths); err != nil {
+		if errors.Is(err, service.ErrInvalidGrant) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		http.Error(w, SERVICE_UNAVAILABLE, http.StatusServiceUnavailable)
 		return
 	}

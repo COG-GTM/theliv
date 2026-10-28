@@ -104,8 +104,9 @@ func checkPattern(patterns []string, strings []string) (bool, error) {
 	return matched, nil
 }
 
-// KeyMatch determines whether key1 matches the pattern of key2 (similar to RESTful path), key2 can contain a *.
-// For example, "/foo/bar" matches "/foo/*"
+// KeyMatch determines whether key1 matches the pattern of key2 (similar to RESTful path).
+// key2 may end with a single "*", which matches any suffix: "/foo/bar" matches "/foo/*".
+// A "*" anywhere else, or a pattern with an empty prefix such as "*", matches nothing.
 // Ref: https://github.com/casbin/casbin/blob/master/util/builtin_operators.go
 func KeyMatch(key1 string, key2 string) bool {
 
@@ -116,11 +117,10 @@ func KeyMatch(key1 string, key2 string) bool {
 	if i == -1 {
 		return key1 == key2
 	}
-
-	if len(key1) > i {
-		return key1[:i] == key2[:i]
+	if i == 0 || i != len(key2)-1 {
+		return false
 	}
-	return key1 == key2[:i]
+	return strings.HasPrefix(key1, key2[:i])
 }
 
 // remove blank and line-breaks from string
