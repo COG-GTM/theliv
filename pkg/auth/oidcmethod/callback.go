@@ -81,16 +81,9 @@ func ExchangeToken(w http.ResponseWriter, r *http.Request) error {
 	user.Id = strings.ToLower(strings.Split(user.Upn, "@")[0])
 	user.Roles = thelivUser.Groups
 
-	// set access_token cookie
-	acc := &http.Cookie{
-		Path:     "/",
-		Name:     AccessTokenKey,
-		Value:    oauth2Token.AccessToken,
-		Expires:  oauth2Token.Expiry,
-		Secure:   r.TLS != nil,
-		HttpOnly: true,
-	}
-	http.SetCookie(w, acc)
+	// theliv never reads the identity provider access token, so it is not
+	// stored in the browser; expire any copy left by earlier releases.
+	http.SetCookie(w, expiredCookie(AccessTokenKey))
 
 	return setUserCookie(r.Context(), user, w)
 }
