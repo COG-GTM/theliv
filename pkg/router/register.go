@@ -36,6 +36,13 @@ var (
 	tldPattern         = regexp.MustCompile(`^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$`)
 )
 
+// Suffixes that only resolve inside a cluster or private network
+// (e.g. kubernetes.default.svc, *.svc.cluster.local, *.ec2.internal).
+var internalTLDs = map[string]bool{
+	"localhost": true, "localdomain": true, "local": true, "internal": true, "intranet": true,
+	"lan": true, "home": true, "corp": true, "private": true, "svc": true, "arpa": true,
+}
+
 func Register(r chi.Router) {
 	r.Post("/{cluster}", clusterRegister)
 }
@@ -169,8 +176,11 @@ func validateClusterURL(raw string, allowedDomains []string) error {
 	if !tldPattern.MatchString(labels[len(labels)-1]) {
 		return errors.New("cluster URL must use a hostname, not an IP address")
 	}
-	if labels[len(labels)-1] == "localhost" {
-		return errors.New("cluster URL must not point to localhost")
+	if internalTLDs[labels[len(labels)-1]] {
+		return errors.New("cluster URL must not use an internal-only domain")
+	}
+	if embedsIPv4(labels) {
+		return errors.New("cluster URL must use a hostname, not an IP address")
 	}
 
 	if len(allowedDomains) == 0 {
@@ -183,4 +193,15 @@ func validateClusterURL(raw string, allowedDomains []string) error {
 		}
 	}
 	return errors.New("cluster URL hostname is not in the allowed cluster domains")
+}
+
+// embedsIPv4 reports whether four consecutive labels form an IPv4 address,
+// as used by wildcard DNS services like 10.0.3.7.nip.io.
+func embedsIPv4(labels []string) bool {
+	for i := 0; i+4 <= len(labels); i++ {
+		if ip := net.ParseIP(strings.Join(labels[i:i+4], ".")); ip != nil && ip.To4() != nil {
+			return true
+		}
+	}
+	return false
 }

@@ -73,6 +73,7 @@ func TestValidateClusterURL(t *testing.T) {
 		// Valid
 		{"eks endpoint", "https://ABCDEF0123456789.gr7.us-east-1.eks.amazonaws.com", nil, false},
 		{"with port", "https://api.prod.example.com:6443", nil, false},
+		{"numeric labels not an ip", "https://k8s.1.2.example.com", nil, false},
 		{"trailing slash", "https://api.prod.example.com/", nil, false},
 		{"trailing dot", "https://api.prod.example.com.", nil, false},
 		{"allowlisted subdomain", "https://abc.gr7.us-east-1.eks.amazonaws.com", []string{"eks.amazonaws.com"}, false},
@@ -105,6 +106,14 @@ func TestValidateClusterURL(t *testing.T) {
 		{"localhost", "https://localhost:8443", nil, true},
 		{"localhost subdomain", "https://foo.localhost", nil, true},
 		{"single label", "https://kubernetes", nil, true},
+		{"kubernetes service", "https://kubernetes.default.svc", nil, true},
+		{"kubernetes service fqdn", "https://kubernetes.default.svc.cluster.local", nil, true},
+		{"ec2 internal", "https://ip-10-0-3-7.ec2.internal", nil, true},
+		{"mdns local", "https://printer.local", nil, true},
+		{"reverse dns", "https://7.3.0.10.in-addr.arpa", nil, true},
+		{"nip.io", "https://10.0.3.7.nip.io", nil, true},
+		{"sslip.io prefixed", "https://app.169.254.169.254.sslip.io", nil, true},
+		{"allowlist does not admit internal", "https://kubernetes.default.svc", []string{"svc"}, true},
 
 		// Allowlist
 		{"not allowlisted", "https://evil.example.com", []string{"eks.amazonaws.com"}, true},
