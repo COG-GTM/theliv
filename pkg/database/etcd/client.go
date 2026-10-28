@@ -130,7 +130,9 @@ func settleFailedLeasedPut(ctx context.Context, key string, leaseID clientv3.Lea
 			return nil
 		}
 	}
-	if _, err := client.Revoke(checkCtx, leaseID); err != nil {
+	revokeCtx, revokeCancel := context.WithTimeout(context.Background(), dialTimeout)
+	defer revokeCancel()
+	if _, err := client.Revoke(revokeCtx, leaseID); err != nil {
 		log.SWithContext(ctx).Errorf("Failed to revoke lease for %v, error is %v\n", key, err)
 	}
 	return putErr
