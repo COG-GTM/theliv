@@ -64,7 +64,7 @@ func StartAuth(handler http.Handler) http.Handler {
 				}
 				return
 			}
-			if err == oidcmethod.ErrNoIDFound {
+			if err == oidcmethod.ErrNoIDFound || err == oidcmethod.ErrInvalidSession {
 				oidcmethod.HandleStartAuthFlow(w, r)
 				return
 			}

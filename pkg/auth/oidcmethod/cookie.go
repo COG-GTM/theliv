@@ -35,7 +35,7 @@ func splitCookie(key string, value string) []*http.Cookie {
 		}
 		cookie := &http.Cookie{
 			Path:     "/",
-			Expires:  time.Now().Add(time.Hour),
+			Expires:  time.Now().Add(sessionTTL),
 			Secure:   true,
 			HttpOnly: true,
 		}
