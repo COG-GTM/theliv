@@ -116,11 +116,11 @@ func KeyMatch(key1 string, key2 string) bool {
 	if i == -1 {
 		return key1 == key2
 	}
-
-	if len(key1) > i {
-		return key1[:i] == key2[:i]
+	// Only a trailing "*" after a non-empty prefix is a wildcard.
+	if i == 0 || i != len(key2)-1 {
+		return false
 	}
-	return key1 == key2[:i]
+	return strings.HasPrefix(key1, key2[:i])
 }
 
 // remove blank and line-breaks from string

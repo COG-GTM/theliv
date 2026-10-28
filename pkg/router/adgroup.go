@@ -6,6 +6,7 @@
 package router
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/fidelity/theliv/pkg/service"
@@ -38,6 +39,10 @@ func AdGroup(r chi.Router) {
 func addGroup(w http.ResponseWriter, r *http.Request) {
 	cluster := chi.URLParam(r, "cluster")
 	namespace := chi.URLParam(r, "namespace")
+	if err := service.ValidateClusterNamespace(cluster, namespace); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	var adgroups AdGroups
 
@@ -50,6 +55,10 @@ func addGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := service.AddGroup(cluster, namespace, adgroups.AdGroups); err != nil {
+		if errors.Is(err, service.ErrInvalidPath) || errors.Is(err, service.ErrInvalidClusterOrNamespace) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		http.Error(w, SERVICE_UNAVAILABLE, http.StatusServiceUnavailable)
 		return
 	}
@@ -64,6 +73,10 @@ func addGroup(w http.ResponseWriter, r *http.Request) {
 func removeGroup(w http.ResponseWriter, r *http.Request) {
 	cluster := chi.URLParam(r, "cluster")
 	namespace := chi.URLParam(r, "namespace")
+	if err := service.ValidateClusterNamespace(cluster, namespace); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	var ads AdGroups
 
