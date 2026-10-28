@@ -54,6 +54,18 @@ func splitCookie(key string, value string) []*http.Cookie {
 	return cookies
 }
 
+func expiredCookie(name string) *http.Cookie {
+	return &http.Cookie{
+		Path:     "/",
+		Name:     name,
+		Value:    "",
+		Expires:  time.Unix(0, 0),
+		MaxAge:   -1,
+		Secure:   true,
+		HttpOnly: true,
+	}
+}
+
 func joinCookies(ctx context.Context, key string, cookieList []*http.Cookie) (string, error) {
 	cookies := make(map[string]string)
 	for _, cookie := range cookieList {
