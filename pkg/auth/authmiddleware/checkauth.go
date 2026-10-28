@@ -48,7 +48,10 @@ func checkRBAC(r *http.Request) (bool, error) {
 	}
 	path := r.URL.Path
 	path = strings.TrimSuffix(path, "/")
-	skip, err := checkPattern([]string{path}, config.GetThelivConfig().Auth.WhitelistPath[:])
+	if strings.Contains(path, "*") {
+		return false, nil
+	}
+	skip, err := isWhitelisted(path, config.GetThelivConfig().Auth.WhitelistPath)
 	if err != nil {
 		return false, err
 	}
@@ -85,6 +88,12 @@ func checkRBAC(r *http.Request) (bool, error) {
 		return false, err
 	}
 	return matched, err
+}
+
+// isWhitelisted reports whether the request path matches any whitelist entry.
+// Whitelist entries are the patterns; the request path is never treated as one.
+func isWhitelisted(path string, whitelist []string) (bool, error) {
+	return checkPattern(whitelist, []string{path})
 }
 
 // check any of string match any of the pattern
