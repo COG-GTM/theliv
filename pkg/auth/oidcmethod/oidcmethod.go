@@ -115,9 +115,13 @@ func CheckAuthorization(r *http.Request) (*http.Request, error) {
 }
 
 func HandleStartAuthFlow(w http.ResponseWriter, r *http.Request) {
-	state := getRedirectUrl(r.Header.Get("redirect"))
-	if state == "" {
-		state = "/"
+	returnPath := safeReturnPath(getRedirectUrl(r.Header.Get("redirect")))
+	host := config.GetThelivConfig().Oidc.CallBackHost
+	state, err := newLoginState(w, returnPath, isSecureRequest(r, host))
+	if err != nil {
+		log.SWithContext(r.Context()).Errorf("failed to generate OIDC state: %v", err)
+		http.Error(w, "failed to start login", http.StatusInternalServerError)
+		return
 	}
 	// redirect to authorization url
 	url := getOauthConfig(r).AuthCodeURL(state)

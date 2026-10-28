@@ -29,16 +29,23 @@ func SSO(r chi.Router) {
 }
 
 func callback(w http.ResponseWriter, r *http.Request) {
-	if err := ExchangeToken(w, r); err != nil {
+	handleCallback(w, r, config.GetThelivConfig().Oidc.CallBackHost)
+}
+
+var exchangeToken = ExchangeToken
+
+func handleCallback(w http.ResponseWriter, r *http.Request, host string) {
+	returnPath, err := consumeLoginState(w, r, isSecureRequest(r, host))
+	if err != nil {
+		log.SWithContext(r.Context()).Warn("rejected OIDC callback with invalid or expired state")
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := exchangeToken(w, r); err != nil {
 		processError(w, r, err)
 		return
 	}
-	oicdConfig := config.GetThelivConfig().Oidc
-	host := oicdConfig.CallBackHost
-	// redirect, by default to /
-	state := r.URL.Query().Get("state")
-
-	http.Redirect(w, r, host+state, http.StatusFound)
+	http.Redirect(w, r, redirectTarget(host, returnPath), http.StatusFound)
 }
 
 func ExchangeToken(w http.ResponseWriter, r *http.Request) error {
