@@ -7,6 +7,8 @@ package authmiddleware
 
 import (
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -59,4 +61,11 @@ func TestGrantCoversConsistentWithKeyMatch(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestGrantedPathsRequiresAuthenticatedRequest(t *testing.T) {
+	r := httptest.NewRequest(http.MethodPost, "/theliv-api/v1/rbac/team-a-role/addpath", nil)
+	grants, err := GrantedPaths(r)
+	assert.Error(t, err)
+	assert.Nil(t, grants)
 }

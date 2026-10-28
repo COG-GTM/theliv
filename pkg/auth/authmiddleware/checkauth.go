@@ -42,45 +42,50 @@ func getPath(ctx context.Context, role string) ([]string, error) {
 	return paths[:], nil
 }
 
-func checkRBAC(r *http.Request) (bool, error) {
+type authUserKey struct{}
+
+// checkRBAC authorizes the request and returns it with the authenticated user
+// attached, so handlers can reuse the user resolved here (see GrantedPaths).
+func checkRBAC(r *http.Request) (*http.Request, bool, error) {
 	user, err := GetUser(r, true)
 	if err != nil {
-		return false, err
+		return r, false, err
 	}
+	r = r.WithContext(context.WithValue(r.Context(), authUserKey{}, user))
 	path := r.URL.Path
 	path = strings.TrimSuffix(path, "/")
 	skip, err := checkPattern([]string{path}, config.GetThelivConfig().Auth.WhitelistPath[:])
 	if err != nil {
-		return false, err
+		return r, false, err
 	}
 	if skip {
-		return true, err
+		return r, true, err
 	}
 	if strings.HasPrefix(path, URLPrefix) {
 		path = path[14:]
 	} else {
-		return false, err
+		return r, false, err
 	}
 	grantPath, err := grantedPathsForUser(r.Context(), user)
 	if err != nil {
-		return false, err
+		return r, false, err
 	}
 	if len(grantPath) < 1 {
-		return false, nil
+		return r, false, nil
 	}
 	matched, err := checkPattern(grantPath[:], []string{path})
 	if err != nil {
-		return false, err
+		return r, false, err
 	}
-	return matched, err
+	return r, matched, err
 }
 
-// GrantedPaths returns every path pattern granted to the user of the request,
-// through the user's own roles and AD groups.
+// GrantedPaths returns every path pattern granted, through roles and AD
+// groups, to the user that StartAuth authenticated for this request.
 func GrantedPaths(r *http.Request) ([]string, error) {
-	user, err := GetUser(r, true)
-	if err != nil {
-		return nil, err
+	user, ok := r.Context().Value(authUserKey{}).(*rbac.User)
+	if !ok || user == nil {
+		return nil, errors.New("no authenticated user in request context")
 	}
 	return grantedPathsForUser(r.Context(), user)
 }
