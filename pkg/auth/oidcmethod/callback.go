@@ -43,7 +43,13 @@ func callback(w http.ResponseWriter, r *http.Request) {
 
 func ExchangeToken(w http.ResponseWriter, r *http.Request) error {
 	ctx := r.Context()
-	oauth2Token, err := getOauthConfig(r).Exchange(r.Context(), r.URL.Query().Get("code"))
+	oc := getOauthConfig()
+	if oc == nil {
+		msg := "OIDC is not initialized"
+		log.SWithContext(ctx).Error(msg)
+		return theliverr.NewCommonError(ctx, 1, msg)
+	}
+	oauth2Token, err := oc.Exchange(r.Context(), r.URL.Query().Get("code"))
 	if err != nil {
 		msg := "failed to exchange token"
 		log.SWithContext(ctx).Error(msg)
@@ -95,25 +101,20 @@ func ExchangeToken(w http.ResponseWriter, r *http.Request) error {
 	return setUserCookie(r.Context(), user, w)
 }
 
-func getOauthConfig(r *http.Request) *oauth2.Config {
-	ctx := r.Context()
-	host := r.Host
-	if oc, ok := oauthConfigs[host]; ok {
-		return oc
-	}
-	oicdConfig := config.GetThelivConfig().Oidc
-	log.SWithContext(ctx).Infof("oauth-config for host %s does not exist, create new one", host)
-	// create new one
-	callback := oicdConfig.CallBackHost + oicdConfig.CallBack
-	oauthConfigs[host] = &oauth2.Config{
-		ClientID:     oicdConfig.ClientID,
-		ClientSecret: oicdConfig.ClientSecret,
-		Endpoint:     provider.Endpoint(),
-		RedirectURL:  callback,
+// newOauthConfig builds the single OAuth2 client config. The redirect URL comes
+// from configuration only, never from the request.
+func newOauthConfig(c *config.OidcConfig, endpoint oauth2.Endpoint) *oauth2.Config {
+	return &oauth2.Config{
+		ClientID:     c.ClientID,
+		ClientSecret: c.ClientSecret,
+		Endpoint:     endpoint,
+		RedirectURL:  c.CallBackHost + c.CallBack,
 		Scopes:       []string{oidc.ScopeOpenID, "profile", "email"},
 	}
-	log.SWithContext(ctx).Infof("successfully created new oauth config")
-	return oauthConfigs[host]
+}
+
+func getOauthConfig() *oauth2.Config {
+	return oauthConfig
 }
 
 func setUserCookie(ctx context.Context, user rbac.UserInfo, w http.ResponseWriter) error {
