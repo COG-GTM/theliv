@@ -6,6 +6,7 @@
 package authmiddleware
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/url"
@@ -17,7 +18,9 @@ import (
 )
 
 var ErrNotThisAuth = errors.New("not this Auth method")
-var authMethod rbac.RBACInfo
+var ErrNoAuthMethod = errors.New("no auth method bound to request")
+
+type authMethodKey struct{}
 
 func StartAuth(handler http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -34,7 +37,7 @@ func StartAuth(handler http.Handler) http.Handler {
 		//local auth
 		r, err := localmethod.CheckAuthorization(r)
 		if err == nil {
-			authMethod = localmethod.Localinfo{}
+			r = withAuthMethod(r, localmethod.Localinfo{})
 			ok, err := checkRBAC(r)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -51,7 +54,7 @@ func StartAuth(handler http.Handler) http.Handler {
 			//oidc auth
 			r, err = oidcmethod.CheckAuthorization(r)
 			if err == nil {
-				authMethod = oidcmethod.OIDC{}
+				r = withAuthMethod(r, oidcmethod.OIDC{})
 				ok, err := checkRBAC(r)
 				if err != nil {
 					http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -73,8 +76,17 @@ func StartAuth(handler http.Handler) http.Handler {
 	})
 }
 
+func withAuthMethod(r *http.Request, method rbac.RBACInfo) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), authMethodKey{}, method))
+}
+
+// GetUser resolves the user with the auth method StartAuth bound to this request.
 func GetUser(r *http.Request, getAds bool) (*rbac.User, error) {
-	return authMethod.GetUser(r, getAds)
+	method, ok := r.Context().Value(authMethodKey{}).(rbac.RBACInfo)
+	if !ok || method == nil {
+		return nil, ErrNoAuthMethod
+	}
+	return method.GetUser(r, getAds)
 }
 
 func getUrlPath(p string) string {

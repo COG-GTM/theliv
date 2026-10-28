@@ -34,6 +34,7 @@ func SubmitFeedback(r chi.Router) {
 		err := json.NewDecoder(r.Body).Decode(&d)
 		if err != nil {
 			processError(w, r, err)
+			return
 		}
 		currentTime := time.Now()
 		timestr := getTimeStr(currentTime)
@@ -43,6 +44,7 @@ func SubmitFeedback(r chi.Router) {
 		user, err := authmiddleware.GetUser(r, false)
 		if err != nil {
 			processError(w, r, err)
+			return
 		}
 		data := FeebackData{
 			User:    user,
