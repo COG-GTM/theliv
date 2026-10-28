@@ -82,7 +82,7 @@ func TestSubmitFeedbackStoresWithTTL(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
 	}
-	if len(store.puts) != 1 || store.puts[0] != feedbackKeyPrefix+"20261028120000" {
+	if len(store.puts) != 1 || store.puts[0] != "/theliv/feedbacks/leased/20261028120000" {
 		t.Fatalf("puts = %v", store.puts)
 	}
 	if store.ttls[0] != feedbackTTL {
@@ -111,6 +111,7 @@ func TestSubmitFeedbackRejectsInvalidInput(t *testing.T) {
 		body string
 	}{
 		{"malformed json", `{"message":`},
+		{"trailing data", `{"message":"hi"}{"message":"again"}`},
 		{"not an object", `"hello"`},
 		{"empty message", `{"message":""}`},
 		{"blank message", `{"message":"   "}`},
@@ -218,5 +219,78 @@ func TestSubmitFeedbackStoreErrorDoesNotReportSuccess(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), "Feedback received.") {
 		t.Fatalf("success reported after store error: %s", rec.Body.String())
+	}
+}
+
+func TestSubmitFeedbackRejectsOversizedTrailingData(t *testing.T) {
+	store, _, h := setupFeedback(t, &rbac.User{UID: "mallory"})
+
+	rec := postFeedback(h, `{"message":"hi"}`+strings.Repeat(" ", 100<<10))
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413", rec.Code)
+	}
+	if len(store.puts) != 0 {
+		t.Fatalf("oversized feedback was stored")
+	}
+}
+
+func TestSubmitFeedbackCountsOnlyLeasedPrefix(t *testing.T) {
+	if !strings.HasPrefix(feedbackKeyPrefix, "/theliv/feedbacks/") || feedbackKeyPrefix == "/theliv/feedbacks/" {
+		t.Fatalf("feedbackKeyPrefix %q must be a sub-prefix of /theliv/feedbacks/", feedbackKeyPrefix)
+	}
+	legacyKey := "/theliv/feedbacks/20240101000000"
+	if strings.HasPrefix(legacyKey, feedbackKeyPrefix) {
+		t.Fatalf("legacy key %q would be counted under %q", legacyKey, feedbackKeyPrefix)
+	}
+}
+
+func TestSubmitFeedbackStoreErrorReleasesRateLimit(t *testing.T) {
+	store, now, h := setupFeedback(t, &rbac.User{UID: "alice"})
+	ok := putFeedback
+	putFeedback = func(ctx context.Context, key string, value interface{}, ttl time.Duration) error {
+		return errors.New("etcdserver: request timed out")
+	}
+	if rec := postFeedback(h, feedbackBody("hi")); rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", rec.Code)
+	}
+
+	putFeedback = ok
+	*now = now.Add(time.Second)
+	if rec := postFeedback(h, feedbackBody("hi")); rec.Code != http.StatusOK {
+		t.Fatalf("retry status = %d, want 200", rec.Code)
+	}
+	if len(store.puts) != 1 {
+		t.Fatalf("puts = %v", store.puts)
+	}
+}
+
+func TestSubmitFeedbackCountErrorReleasesRateLimit(t *testing.T) {
+	store, _, h := setupFeedback(t, &rbac.User{UID: "alice"})
+	ok := countFeedbacks
+	countFeedbacks = func(ctx context.Context, prefix string) (int64, error) {
+		return 0, errors.New("etcdserver: request timed out")
+	}
+	if rec := postFeedback(h, feedbackBody("hi")); rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", rec.Code)
+	}
+
+	countFeedbacks = ok
+	if rec := postFeedback(h, feedbackBody("hi")); rec.Code != http.StatusOK {
+		t.Fatalf("retry status = %d, want 200", rec.Code)
+	}
+	if len(store.puts) != 1 {
+		t.Fatalf("puts = %v", store.puts)
+	}
+}
+
+func TestSubmissionLimiterReleaseKeepsNewerReservation(t *testing.T) {
+	l := newSubmissionLimiter(time.Minute)
+	t0 := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
+	if !l.allow("u", t0) {
+		t.Fatal("first allow failed")
+	}
+	l.release("u", t0.Add(-time.Hour))
+	if l.allow("u", t0.Add(time.Second)) {
+		t.Fatal("release with a stale timestamp freed the current reservation")
 	}
 }

@@ -107,8 +107,16 @@ func PutWithTTL(ctx context.Context, key string, value interface{}, ttl time.Dur
 		log.SWithContext(ctx).Errorf("Failed to grant lease for %v, error is %v\n", key, err)
 		return err
 	}
-	_, err = client.Put(ctx, key, string(c), clientv3.WithLease(lease.ID))
-	return err
+	if _, err = client.Put(ctx, key, string(c), clientv3.WithLease(lease.ID)); err != nil {
+		log.SWithContext(ctx).Errorf("Failed to put %v, error is %v\n", key, err)
+		revokeCtx, cancel := context.WithTimeout(context.Background(), dialTimeout)
+		defer cancel()
+		if _, rerr := client.Revoke(revokeCtx, lease.ID); rerr != nil {
+			log.SWithContext(ctx).Errorf("Failed to revoke lease for %v, error is %v\n", key, rerr)
+		}
+		return err
+	}
+	return nil
 }
 
 // Count keys with prefix, without fetching keys or values
