@@ -107,8 +107,11 @@ type AuthConfig struct {
 	SloURL          string   `json:"sloURL"`
 	EntityID        string   `json:"entityID"`
 	WhitelistPath   []string `json:"whitelistpath"`
-	ClientID        string   `json:"clientID"`
-	ClientSecret    string   `json:"clientSecret"`
+	// Host names (or parent domains) that registered cluster URLs may point to.
+	// Empty means any https host is accepted.
+	RegisterAllowedHosts []string `json:"registerAllowedHosts,omitempty"`
+	ClientID             string   `json:"clientID"`
+	ClientSecret         string   `json:"clientSecret"`
 }
 
 type OidcConfig struct {

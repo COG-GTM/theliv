@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/fidelity/theliv/internal/rbac"
 	"github.com/fidelity/theliv/pkg/config"
 	"github.com/fidelity/theliv/pkg/database/etcd"
 )
@@ -60,7 +61,21 @@ func checkRBAC(r *http.Request) (bool, error) {
 	} else {
 		return false, err
 	}
-	roles, err := getRole(r.Context(), user.UID)
+	return userHasGrant(r.Context(), user, path)
+}
+
+// HasGrant reports whether the authenticated caller's roles grant the given
+// path (relative to /theliv-api/v1). Whitelisted paths are not considered.
+func HasGrant(r *http.Request, path string) (bool, error) {
+	user, err := GetUser(r, true)
+	if err != nil {
+		return false, err
+	}
+	return userHasGrant(r.Context(), user, path)
+}
+
+func userHasGrant(ctx context.Context, user *rbac.User, path string) (bool, error) {
+	roles, err := getRole(ctx, user.UID)
 	if err != nil {
 		return false, err
 	}
@@ -69,7 +84,7 @@ func checkRBAC(r *http.Request) (bool, error) {
 	roles = append(roles, adgroups...)
 	var grantPath []string
 	for _, role := range roles {
-		path, err := getPath(r.Context(), role)
+		path, err := getPath(ctx, role)
 		if err != nil {
 			return false, err
 		}

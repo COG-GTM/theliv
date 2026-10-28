@@ -85,6 +85,28 @@ func PutStr(key, value string) error {
 	return err
 }
 
+// PutAllIf atomically puts every kv in kvs, but only when each key in absent
+// does not exist and each key in equal currently holds the given value.
+// Returns false (and writes nothing) when any condition does not hold.
+func PutAllIf(ctx context.Context, absent []string, equal map[string]string, kvs map[string]string) (bool, error) {
+	cmps := make([]clientv3.Cmp, 0, len(absent)+len(equal))
+	for _, k := range absent {
+		cmps = append(cmps, clientv3.Compare(clientv3.CreateRevision(k), "=", 0))
+	}
+	for k, v := range equal {
+		cmps = append(cmps, clientv3.Compare(clientv3.Value(k), "=", v))
+	}
+	ops := make([]clientv3.Op, 0, len(kvs))
+	for k, v := range kvs {
+		ops = append(ops, clientv3.OpPut(k, v))
+	}
+	res, err := client.Txn(ctx).If(cmps...).Then(ops...).Commit()
+	if err != nil {
+		return false, err
+	}
+	return res.Succeeded, nil
+}
+
 // Marshall the value (struct) and put to etcd
 func Put(key string, value interface{}) error {
 	c, err := json.Marshal(value)
