@@ -52,8 +52,8 @@
         </div>
     </div>
     
-    <div class="video-player">
+    <div class="video-player" *ngIf="configInfo && configInfo.videoLink">
         <div class="video-title">How to Use Theliv in 1 Minute</div>
-        <a [href]="urlSafe" target="_blank"><img class="video-image" frameborder="0" src="assets/images/video.png"></a>
+        <a [href]="configInfo.videoLink" target="_blank" rel="noopener noreferrer"><img class="video-image" frameborder="0" src="assets/images/video.png"></a>
     </div>
 </div>

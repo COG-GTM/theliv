@@ -10,7 +10,6 @@ import { ActivatedRoute, Router } from '@angular/router';
 import { KubernetesService } from '../../services/kubernetes.service';
 import { map, startWith } from 'rxjs/operators';
 import { FormControl } from '@angular/forms';
-import { DomSanitizer } from '@angular/platform-browser';
 
 export interface NamespaceOption {
   text: string
@@ -61,12 +60,10 @@ export class HomePageComponent implements OnInit {
   feedback = '';
   gridToggle = false;
   configInfo: any;
-  urlSafe: any;
 
   constructor(    
     private kubeService: KubernetesService,
-    private router: Router,
-    public sanitizer: DomSanitizer) { }
+    private router: Router) { }
 
     ngOnInit(): void {
       this.resourceGroups = null;
@@ -91,7 +88,6 @@ export class HomePageComponent implements OnInit {
       this.kubeService.getConfigInfo().subscribe((res: any) => {
         if (res) {
           this.configInfo = res;
-          this.urlSafe = this.sanitizer.bypassSecurityTrustResourceUrl(this.configInfo.videoLink);
           this.loading = false;
         }
       }, (err: any) => {

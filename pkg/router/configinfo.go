@@ -7,6 +7,8 @@ package router
 
 import (
 	"net/http"
+	"net/url"
+	"strings"
 
 	"github.com/fidelity/theliv/pkg/config"
 	"github.com/go-chi/chi/v5"
@@ -27,8 +29,22 @@ func getUIConfig() *ConfigData {
 	return &ConfigData{
 		EmailAddr:       thelivcfg.EmailAddr,
 		DevelopedByTeam: thelivcfg.DevelopedByTeam,
-		VideoLink:       thelivcfg.VideoLink,
+		VideoLink:       safeExternalURL(thelivcfg.VideoLink),
 	}
+}
+
+// safeExternalURL returns link only when it is an absolute https URL with a host,
+// so the UI never receives javascript:, data: or other script-capable schemes.
+func safeExternalURL(link string) string {
+	link = strings.TrimSpace(link)
+	if link == "" {
+		return ""
+	}
+	u, err := url.Parse(link)
+	if err != nil || !strings.EqualFold(u.Scheme, "https") || u.Host == "" {
+		return ""
+	}
+	return u.String()
 }
 
 type ConfigData struct {
