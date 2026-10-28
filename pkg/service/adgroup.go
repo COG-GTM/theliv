@@ -7,6 +7,9 @@ package service
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"regexp"
 	"strings"
 
 	auth "github.com/fidelity/theliv/pkg/auth/authmiddleware"
@@ -18,9 +21,29 @@ const (
 	DETECTOR = "/detector/"
 )
 
+var (
+	ErrInvalidClusterOrNamespace = errors.New("invalid cluster or namespace name")
+
+	clusterNamePattern   = regexp.MustCompile(`^[a-z0-9]([a-z0-9_-]{0,61}[a-z0-9])?$`)
+	namespaceNamePattern = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$`)
+)
+
+// ValidateClusterNamespace ensures cluster and namespace are safe to embed in role grants.
+func ValidateClusterNamespace(cluster string, namespace string) error {
+	if !clusterNamePattern.MatchString(cluster) {
+		return fmt.Errorf("%w: cluster %q", ErrInvalidClusterOrNamespace, cluster)
+	}
+	if !namespaceNamePattern.MatchString(namespace) {
+		return fmt.Errorf("%w: namespace %q", ErrInvalidClusterOrNamespace, namespace)
+	}
+	return nil
+}
+
 // This function will add 2 new path, into every role.
 func AddGroup(cluster string, namespace string, roles []string) (err error) {
-
+	if err = ValidateClusterNamespace(cluster, namespace); err != nil {
+		return
+	}
 	newPath := getPath(cluster, namespace)
 
 	for _, role := range roles {
@@ -33,7 +56,9 @@ func AddGroup(cluster string, namespace string, roles []string) (err error) {
 
 // This function will remove 2 path, from every role.
 func RemoveGroup(cluster string, namespace string, roles []string) (err error) {
-
+	if err = ValidateClusterNamespace(cluster, namespace); err != nil {
+		return
+	}
 	rmvPath := getPath(cluster, namespace)
 
 	for _, role := range roles {

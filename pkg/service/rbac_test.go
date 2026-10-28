@@ -35,3 +35,33 @@ func TestGetRemovedElement(t *testing.T) {
 	result = getRemovedElement(oriEle, rmvEle)
 	assert.EqualValues(t, "e2,e4", strings.Join(result, SEPARATOR))
 }
+
+func TestValidatePaths(t *testing.T) {
+	tests := []struct {
+		name      string
+		path      string
+		wantError bool
+	}{
+		{"exact", "/clusters", false},
+		{"prefix wildcard", "/detector/eks-prod/payments*", false},
+		{"bare wildcard", "*", true},
+		{"empty", "", true},
+		{"comma", "/detector/eks-prod/payments,*", true},
+		{"trailing comma", "/detector/a,", true},
+		{"space", "/detector/a *", true},
+		{"newline", "/detector/a\n*", true},
+		{"wildcard in middle", "/detector/*/payments", true},
+		{"double wildcard", "/detector/**", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidatePaths([]string{tt.path})
+			assert.Equal(t, tt.wantError, err != nil, "err=%v", err)
+		})
+	}
+}
+
+func TestAddPathRejectsInvalidPaths(t *testing.T) {
+	assert.ErrorIs(t, AddPath("payments-team", []string{"*"}), ErrInvalidPath)
+	assert.ErrorIs(t, AddPath("payments-team", []string{"/detector/eks-prod/payments,*"}), ErrInvalidPath)
+}
