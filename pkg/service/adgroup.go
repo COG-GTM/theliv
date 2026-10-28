@@ -34,7 +34,7 @@ func AddGroup(cluster string, namespace string, roles []string) (err error) {
 // This function will remove 2 path, from every role.
 func RemoveGroup(cluster string, namespace string, roles []string) (err error) {
 
-	rmvPath := getPath(cluster, namespace)
+	rmvPath := append(getPath(cluster, namespace), getLegacyPath(cluster, namespace)...)
 
 	for _, role := range roles {
 		if err = RemovePath(role, rmvPath); err != nil {
@@ -80,8 +80,16 @@ func getRemovedElement(oldValue []string, removedValue []string) []string {
 	return oldValue
 }
 
-// Generate 2 path, /cluster/cluster*, /detector/cluster/namespace*
+// Generate 2 path, /clusters/cluster/*, /detector/cluster/namespace/*
 func getPath(cluster string, namespace string) []string {
+	return []string{
+		CLUSTER + cluster + "/*",
+		DETECTOR + cluster + "/" + namespace + "/*"}
+}
+
+// Path format written before grants carried an explicit "/" boundary,
+// still removed so existing grants can be revoked.
+func getLegacyPath(cluster string, namespace string) []string {
 	return []string{
 		CLUSTER + cluster + "*",
 		DETECTOR + cluster + "/" + namespace + "*"}
