@@ -21,6 +21,9 @@ import (
 
 const (
 	maxValueLength = 3900
+	// maxChunks caps how many cookies a single value may be split across
+	// (~31KB), which bounds the work joinCookies does for client input.
+	maxChunks = 8
 )
 
 func splitCookie(key string, value string) []*http.Cookie {
@@ -79,17 +82,27 @@ func joinCookies(ctx context.Context, key string, cookieList []*http.Cookie) (st
 		if numOfChunks, err = strconv.Atoi(parts[0]); err != nil {
 			return "", err
 		}
+		if numOfChunks < 1 || numOfChunks > maxChunks {
+			log.SWithContext(ctx).Warnf("invalid chunk count %d for cookie %s", numOfChunks, key)
+			return "", fmt.Errorf("invalid chunk count for cookie %s", key)
+		}
 		sb.WriteString(parts[1])
 	} else if len(parts) == 1 {
 		numOfChunks = 1
 		sb.WriteString(parts[0])
 	} else {
-		log.SWithContext(ctx).Warn("invalid cookie %s")
+		log.SWithContext(ctx).Warnf("invalid cookie %s", key)
 		return "", fmt.Errorf("invalid cookie for key %s", key)
 	}
 
 	for i := 1; i < numOfChunks; i++ {
-		sb.WriteString(cookies[fmt.Sprintf("%s-%d", key, i)])
+		chunkKey := fmt.Sprintf("%s-%d", key, i)
+		chunk, ok := cookies[chunkKey]
+		if !ok {
+			log.SWithContext(ctx).Warnf("missing cookie chunk %s", chunkKey)
+			return "", fmt.Errorf("missing cookie chunk %s", chunkKey)
+		}
+		sb.WriteString(chunk)
 	}
 	return sb.String(), nil
 }
