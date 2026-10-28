@@ -28,7 +28,8 @@ const (
 
 var provider *oidc.Provider
 
-var oauthConfigs = make(map[string]*oauth2.Config)
+// oauthConfig is built once by InitAuth and only read afterwards.
+var oauthConfig *oauth2.Config
 var jwtKey []byte
 var ErrNoIDFound = errors.New("no id token found")
 
@@ -57,6 +58,7 @@ func InitAuth() error {
 	}
 	verifier = provider.Verifier(oidcConfig)
 	jwtKey = []byte(oicdConfig.ClientSecret)
+	oauthConfig = newOauthConfig(oicdConfig, provider.Endpoint())
 	return nil
 }
 
@@ -119,8 +121,14 @@ func HandleStartAuthFlow(w http.ResponseWriter, r *http.Request) {
 	if state == "" {
 		state = "/"
 	}
+	oc := getOauthConfig()
+	if oc == nil {
+		log.SWithContext(r.Context()).Error("OIDC is not initialized, cannot start auth flow")
+		http.Error(w, "authentication unavailable", http.StatusServiceUnavailable)
+		return
+	}
 	// redirect to authorization url
-	url := getOauthConfig(r).AuthCodeURL(state)
+	url := oc.AuthCodeURL(state)
 	w.Header().Add("X-Location", url)
 	w.WriteHeader(http.StatusUnauthorized)
 	render.JSON(w, r, struct {
