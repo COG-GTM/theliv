@@ -109,14 +109,31 @@ func PutWithTTL(ctx context.Context, key string, value interface{}, ttl time.Dur
 	}
 	if _, err = client.Put(ctx, key, string(c), clientv3.WithLease(lease.ID)); err != nil {
 		log.SWithContext(ctx).Errorf("Failed to put %v, error is %v\n", key, err)
-		revokeCtx, cancel := context.WithTimeout(context.Background(), dialTimeout)
-		defer cancel()
-		if _, rerr := client.Revoke(revokeCtx, lease.ID); rerr != nil {
-			log.SWithContext(ctx).Errorf("Failed to revoke lease for %v, error is %v\n", key, rerr)
-		}
-		return err
+		return settleFailedLeasedPut(ctx, key, lease.ID, err)
 	}
 	return nil
+}
+
+// A failed Put may still have committed (e.g. the response timed out), so only
+// revoke the lease once a read confirms the key is not attached to it.
+func settleFailedLeasedPut(ctx context.Context, key string, leaseID clientv3.LeaseID, putErr error) error {
+	checkCtx, cancel := context.WithTimeout(context.Background(), dialTimeout)
+	defer cancel()
+	res, err := client.Get(checkCtx, key)
+	if err != nil {
+		log.SWithContext(ctx).Errorf("Failed to verify put of %v, keeping lease, error is %v\n", key, err)
+		return putErr
+	}
+	for _, kv := range res.Kvs {
+		if clientv3.LeaseID(kv.Lease) == leaseID {
+			log.SWithContext(ctx).Infof("Put of %v committed despite error %v\n", key, putErr)
+			return nil
+		}
+	}
+	if _, err := client.Revoke(checkCtx, leaseID); err != nil {
+		log.SWithContext(ctx).Errorf("Failed to revoke lease for %v, error is %v\n", key, err)
+	}
+	return putErr
 }
 
 // Count keys with prefix, without fetching keys or values
