@@ -35,7 +35,7 @@ func StartAuth(handler http.Handler) http.Handler {
 		r, err := localmethod.CheckAuthorization(r)
 		if err == nil {
 			authMethod = localmethod.Localinfo{}
-			ok, err := checkRBAC(r)
+			r, ok, err := checkRBAC(r)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
@@ -52,7 +52,7 @@ func StartAuth(handler http.Handler) http.Handler {
 			r, err = oidcmethod.CheckAuthorization(r)
 			if err == nil {
 				authMethod = oidcmethod.OIDC{}
-				ok, err := checkRBAC(r)
+				r, ok, err := checkRBAC(r)
 				if err != nil {
 					http.Error(w, err.Error(), http.StatusInternalServerError)
 					return

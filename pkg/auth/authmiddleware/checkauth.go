@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/fidelity/theliv/internal/rbac"
 	"github.com/fidelity/theliv/pkg/config"
 	"github.com/fidelity/theliv/pkg/database/etcd"
 )
@@ -41,50 +42,103 @@ func getPath(ctx context.Context, role string) ([]string, error) {
 	return paths[:], nil
 }
 
-func checkRBAC(r *http.Request) (bool, error) {
+type authUserKey struct{}
+
+// checkRBAC authorizes the request and returns it with the authenticated user
+// attached, so handlers can reuse the user resolved here (see GrantedPaths).
+func checkRBAC(r *http.Request) (*http.Request, bool, error) {
 	user, err := GetUser(r, true)
 	if err != nil {
-		return false, err
+		return r, false, err
 	}
+	r = r.WithContext(context.WithValue(r.Context(), authUserKey{}, user))
 	path := r.URL.Path
 	path = strings.TrimSuffix(path, "/")
 	skip, err := checkPattern([]string{path}, config.GetThelivConfig().Auth.WhitelistPath[:])
 	if err != nil {
-		return false, err
+		return r, false, err
 	}
 	if skip {
-		return true, err
+		return r, true, err
 	}
 	if strings.HasPrefix(path, URLPrefix) {
 		path = path[14:]
 	} else {
-		return false, err
+		return r, false, err
 	}
-	roles, err := getRole(r.Context(), user.UID)
+	grantPath, err := grantedPathsForUser(r.Context(), user)
 	if err != nil {
-		return false, err
+		return r, false, err
 	}
-	adgroups := user.AdGroups
+	if len(grantPath) < 1 {
+		return r, false, nil
+	}
+	matched, err := checkPattern(grantPath[:], []string{path})
+	if err != nil {
+		return r, false, err
+	}
+	return r, matched, err
+}
 
-	roles = append(roles, adgroups...)
+// GrantedPaths returns every path pattern granted, through roles and AD
+// groups, to the user that StartAuth authenticated for this request.
+func GrantedPaths(r *http.Request) ([]string, error) {
+	user, ok := r.Context().Value(authUserKey{}).(*rbac.User)
+	if !ok || user == nil {
+		return nil, errors.New("no authenticated user in request context")
+	}
+	return grantedPathsForUser(r.Context(), user)
+}
+
+func grantedPathsForUser(ctx context.Context, user *rbac.User) ([]string, error) {
+	roles, err := getRole(ctx, user.UID)
+	if err != nil {
+		return nil, err
+	}
+	roles = append(roles, user.AdGroups...)
 	var grantPath []string
 	for _, role := range roles {
-		path, err := getPath(r.Context(), role)
+		path, err := getPath(ctx, role)
 		if err != nil {
-			return false, err
+			return nil, err
 		}
 		if path != nil {
 			grantPath = append(grantPath, path...)
 		}
 	}
-	if len(grantPath) < 1 {
-		return false, nil
+	return grantPath, nil
+}
+
+// GrantCovers reports whether every request path matched by the pattern
+// requested is also matched (see KeyMatch) by at least one of grants,
+// i.e. whether a holder of grants may delegate requested.
+func GrantCovers(grants []string, requested string) bool {
+	reqPrefix, reqWildcard := wildcardPrefix(CleanString(requested))
+	for _, grant := range grants {
+		grant = CleanString(grant)
+		if grant == "" {
+			continue
+		}
+		grantPrefix, grantWildcard := wildcardPrefix(grant)
+		if !grantWildcard {
+			if !reqWildcard && reqPrefix == grant {
+				return true
+			}
+			continue
+		}
+		if strings.HasPrefix(reqPrefix, grantPrefix) {
+			return true
+		}
 	}
-	matched, err := checkPattern(grantPath[:], []string{path})
-	if err != nil {
-		return false, err
+	return false
+}
+
+func wildcardPrefix(p string) (string, bool) {
+	i := strings.Index(p, "*")
+	if i == -1 {
+		return p, false
 	}
-	return matched, err
+	return p[:i], true
 }
 
 // check any of string match any of the pattern
