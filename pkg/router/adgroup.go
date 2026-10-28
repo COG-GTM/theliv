@@ -7,6 +7,7 @@ package router
 
 import (
 	"net/http"
+	"regexp"
 
 	"github.com/fidelity/theliv/pkg/service"
 	"github.com/go-chi/chi/v5"
@@ -17,7 +18,16 @@ const (
 	MissingAdGroup = "adgroups field missing or empty in request body"
 	Added          = "Cluster/NS added to adgroups"
 	REMOVED        = "Cluster/NS removed from adgroups"
+	InvalidTarget  = "cluster or namespace name is invalid"
 )
+
+var namespaceNamePattern = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$`)
+
+// Cluster and namespace are written verbatim into RBAC grant paths,
+// so only plain names are accepted: no "*", ",", "/" or encoded characters.
+func validAdGroupTarget(cluster string, namespace string) bool {
+	return clusterNamePattern.MatchString(cluster) && namespaceNamePattern.MatchString(namespace)
+}
 
 type AdGroups struct {
 	AdGroups []string `json:"adgroups"`
@@ -38,6 +48,10 @@ func AdGroup(r chi.Router) {
 func addGroup(w http.ResponseWriter, r *http.Request) {
 	cluster := chi.URLParam(r, "cluster")
 	namespace := chi.URLParam(r, "namespace")
+	if !validAdGroupTarget(cluster, namespace) {
+		http.Error(w, InvalidTarget, http.StatusBadRequest)
+		return
+	}
 
 	var adgroups AdGroups
 
@@ -64,6 +78,10 @@ func addGroup(w http.ResponseWriter, r *http.Request) {
 func removeGroup(w http.ResponseWriter, r *http.Request) {
 	cluster := chi.URLParam(r, "cluster")
 	namespace := chi.URLParam(r, "namespace")
+	if !validAdGroupTarget(cluster, namespace) {
+		http.Error(w, InvalidTarget, http.StatusBadRequest)
+		return
+	}
 
 	var ads AdGroups
 

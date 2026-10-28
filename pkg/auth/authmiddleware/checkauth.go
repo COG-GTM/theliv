@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"path"
 	"strings"
 
 	"github.com/fidelity/theliv/pkg/config"
@@ -46,17 +47,21 @@ func checkRBAC(r *http.Request) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	path := r.URL.Path
-	path = strings.TrimSuffix(path, "/")
-	skip, err := checkPattern([]string{path}, config.GetThelivConfig().Auth.WhitelistPath[:])
-	if err != nil {
-		return false, err
+	path, ok := requestPath(r)
+	if !ok {
+		return false, nil
 	}
-	if skip {
-		return true, err
+	if whitelist := config.GetThelivConfig().Auth.WhitelistPath; len(whitelist) > 0 {
+		skip, err := checkPattern(whitelist[:], []string{path})
+		if err != nil {
+			return false, err
+		}
+		if skip {
+			return true, err
+		}
 	}
-	if strings.HasPrefix(path, URLPrefix) {
-		path = path[14:]
+	if path == URLPrefix || strings.HasPrefix(path, URLPrefix+"/") {
+		path = path[len(URLPrefix):]
 	} else {
 		return false, err
 	}
@@ -87,6 +92,22 @@ func checkRBAC(r *http.Request) (bool, error) {
 	return matched, err
 }
 
+// requestPath returns the path the router dispatches on (the escaped form when the
+// request carries percent-encoded characters), without a trailing slash.
+// Paths with dot segments or empty segments are rejected, so a grant on "/a/b/*"
+// can never be satisfied by a path that resolves outside "/a/b/".
+func requestPath(r *http.Request) (string, bool) {
+	p := r.URL.Path
+	if r.URL.RawPath != "" {
+		p = r.URL.RawPath
+	}
+	p = strings.TrimSuffix(p, "/")
+	if p == "" || path.Clean(p) != p {
+		return "", false
+	}
+	return p, true
+}
+
 // check any of string match any of the pattern
 func checkPattern(patterns []string, strings []string) (bool, error) {
 	matched := false
@@ -105,8 +126,10 @@ func checkPattern(patterns []string, strings []string) (bool, error) {
 }
 
 // KeyMatch determines whether key1 matches the pattern of key2 (similar to RESTful path), key2 can contain a *.
-// For example, "/foo/bar" matches "/foo/*"
-// Ref: https://github.com/casbin/casbin/blob/master/util/builtin_operators.go
+// The * only matches whole path segments, everything after it is ignored:
+//   - "/foo/*" matches "/foo" and everything under "/foo/".
+//   - "/foo*" matches "/foo" and everything under "/foo/", but not "/foobar".
+//   - "*" matches everything.
 func KeyMatch(key1 string, key2 string) bool {
 
 	key1 = CleanString(key1)
@@ -117,10 +140,12 @@ func KeyMatch(key1 string, key2 string) bool {
 		return key1 == key2
 	}
 
-	if len(key1) > i {
-		return key1[:i] == key2[:i]
+	prefix := key2[:i]
+	if prefix == "" {
+		return true
 	}
-	return key1 == key2[:i]
+	prefix = strings.TrimSuffix(prefix, "/")
+	return key1 == prefix || strings.HasPrefix(key1, prefix+"/")
 }
 
 // remove blank and line-breaks from string
