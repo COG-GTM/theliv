@@ -7,6 +7,7 @@ package oidcmethod
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -124,6 +125,11 @@ func setUserCookie(ctx context.Context, user rbac.UserInfo, w http.ResponseWrite
 	}
 	//set id tokens
 	cookies := splitCookie(IDTokenKey, userinfo)
+	if len(cookies) > maxChunks {
+		msg := fmt.Sprintf("user token needs %d cookies, exceeds limit of %d", len(cookies), maxChunks)
+		log.SWithContext(ctx).Error(msg)
+		return theliverr.NewCommonError(ctx, 1, msg)
+	}
 	for _, ck := range cookies {
 		http.SetCookie(w, ck)
 	}
