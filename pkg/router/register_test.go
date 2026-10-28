@@ -113,9 +113,13 @@ func TestValidateClusterURL(t *testing.T) {
 		{"reverse dns", "https://7.3.0.10.in-addr.arpa", nil, true},
 		{"nip.io", "https://10.0.3.7.nip.io", nil, true},
 		{"sslip.io prefixed", "https://app.169.254.169.254.sslip.io", nil, true},
+		{"sslip.io dashed", "https://10-0-3-7.sslip.io", nil, true},
+		{"loopback wildcard dns", "https://api.localtest.me", nil, true},
 		{"allowlist does not admit internal", "https://kubernetes.default.svc", []string{"svc"}, true},
 
 		// Allowlist
+		{"numeric labels allowlisted", "https://api.1.2.3.4.example.com", []string{"example.com"}, false},
+		{"numeric labels", "https://api.1.2.3.4.example.com", nil, false},
 		{"not allowlisted", "https://evil.example.com", []string{"eks.amazonaws.com"}, true},
 		{"suffix trick", "https://evileks.amazonaws.com", []string{"eks.amazonaws.com"}, true},
 		{"allowlist does not admit ip", "https://10.0.3.7", []string{"eks.amazonaws.com"}, true},

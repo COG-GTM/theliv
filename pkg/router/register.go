@@ -43,6 +43,12 @@ var internalTLDs = map[string]bool{
 	"lan": true, "home": true, "corp": true, "private": true, "svc": true, "arpa": true,
 }
 
+// Public DNS services that resolve names to embedded or loopback IPs
+// (e.g. 10.0.3.7.nip.io, anything.localtest.me -> 127.0.0.1).
+var ipResolvingDomains = []string{
+	"nip.io", "sslip.io", "xip.io", "traefik.me", "localtest.me", "lvh.me", "vcap.me",
+}
+
 func Register(r chi.Router) {
 	r.Post("/{cluster}", clusterRegister)
 }
@@ -179,27 +185,24 @@ func validateClusterURL(raw string, allowedDomains []string) error {
 	if internalTLDs[labels[len(labels)-1]] {
 		return errors.New("cluster URL must not use an internal-only domain")
 	}
-	if embedsIPv4(labels) {
+	if matchesDomain(host, ipResolvingDomains) {
 		return errors.New("cluster URL must use a hostname, not an IP address")
 	}
 
 	if len(allowedDomains) == 0 {
 		return nil
 	}
-	for _, d := range allowedDomains {
-		d = strings.ToLower(strings.TrimSuffix(strings.TrimLeft(strings.TrimPrefix(strings.TrimSpace(d), "*"), "."), "."))
-		if d != "" && (host == d || strings.HasSuffix(host, "."+d)) {
-			return nil
-		}
+	if matchesDomain(host, allowedDomains) {
+		return nil
 	}
 	return errors.New("cluster URL hostname is not in the allowed cluster domains")
 }
 
-// embedsIPv4 reports whether four consecutive labels form an IPv4 address,
-// as used by wildcard DNS services like 10.0.3.7.nip.io.
-func embedsIPv4(labels []string) bool {
-	for i := 0; i+4 <= len(labels); i++ {
-		if ip := net.ParseIP(strings.Join(labels[i:i+4], ".")); ip != nil && ip.To4() != nil {
+// matchesDomain reports whether host equals or is a subdomain of any of domains.
+func matchesDomain(host string, domains []string) bool {
+	for _, d := range domains {
+		d = strings.ToLower(strings.TrimSuffix(strings.TrimLeft(strings.TrimPrefix(strings.TrimSpace(d), "*"), "."), "."))
+		if d != "" && (host == d || strings.HasSuffix(host, "."+d)) {
 			return true
 		}
 	}
