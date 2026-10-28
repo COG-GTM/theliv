@@ -35,6 +35,8 @@ func Register(r chi.Router) {
 // Path parameter cluster, should be a valid cluster name (minimum 3 characters).
 // If cluster name is less than 3 characters, 400 will be returned.
 // Request body should include {"Url": "", "CA": "", "Token": ""}, or 400 will be returned.
+// Non-empty Url must be an https URL with no path, CA base64 encoded PEM certificates,
+// Token a bearer token without whitespace and Account a 12 digit AWS account id, or 400 will be returned.
 // If backend DB operation failed, return 503.
 // if backend DB operation success, return "Registered".
 func clusterRegister(w http.ResponseWriter, r *http.Request) {
@@ -72,6 +74,12 @@ func clusterRegister(w http.ResponseWriter, r *http.Request) {
 
 	if basic.Token == "" {
 		l.Error("cluster token is empty")
+	}
+
+	if validationErr := service.ValidateClusterBasic(basic); validationErr != nil {
+		l.With(slog.String("error", validationErr.Error())).Error("cluster registration validation failed")
+		http.Error(w, validationErr.Error(), http.StatusBadRequest)
+		return
 	}
 
 	if err := service.RegisterCluster(r.Context(), l, basic); err != nil {

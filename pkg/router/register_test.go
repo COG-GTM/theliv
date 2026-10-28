@@ -6,7 +6,12 @@
 package router
 
 import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
+
+	"github.com/go-chi/chi/v5"
 )
 
 func TestValidateClusterName(t *testing.T) {
@@ -53,6 +58,29 @@ func TestValidateClusterName(t *testing.T) {
 			err := validateClusterName(tt.input)
 			if (err != nil) != tt.wantError {
 				t.Errorf("validateClusterName(%q) error = %v, wantError %v", tt.input, err, tt.wantError)
+			}
+		})
+	}
+}
+
+func TestClusterRegisterRejectsKubeconfigInjection(t *testing.T) {
+	bodies := map[string]string{
+		"token exec":      `{"Url":"https://attacker.example","CA":"","Token":"\n    exec:\n      apiVersion: client.authentication.k8s.io/v1beta1\n      command: /bin/sh\n      args: [\"-c\", \"id\"]"}`,
+		"token tokenFile": `{"Url":"https://attacker.example","Token":"x\n    tokenFile: /etc/passwd"}`,
+		"url newline":     `{"Url":"https://attacker.example\n    insecure-skip-tls-verify: true","Token":"abc"}`,
+		"url http":        `{"Url":"http://attacker.example","Token":"abc"}`,
+		"ca newline":      `{"Url":"https://attacker.example","CA":"Zm9v\n    proxy-url: http://x","Token":"abc"}`,
+		"account":         `{"Url":"https://attacker.example","Token":"abc","Account":"1\", \"role\": \"x"}`,
+	}
+	for name, body := range bodies {
+		t.Run(name, func(t *testing.T) {
+			r := chi.NewRouter()
+			Register(r)
+			req := httptest.NewRequest(http.MethodPost, "/eks-prod", strings.NewReader(body))
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+			if w.Code != http.StatusBadRequest {
+				t.Errorf("status = %d, want 400 (body %q)", w.Code, w.Body.String())
 			}
 		})
 	}

@@ -68,6 +68,10 @@ func (ecl *EtcdConfigLoader) GetKubernetesConfig(ctx context.Context, name strin
 	if len(conf.KubeConf) == 0 {
 		return nil, errors.New("empty KubeConf")
 	}
+	if err := ValidateRegisteredKubeConfig(conf.KubeConf); err != nil {
+		log.SWithContext(ctx).Errorf("Refusing stored kubeconfig for cluster %v, error is %v\n", name, err)
+		return nil, err
+	}
 	return conf, nil
 }
 
