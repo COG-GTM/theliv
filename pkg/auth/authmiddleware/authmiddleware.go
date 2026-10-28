@@ -6,6 +6,7 @@
 package authmiddleware
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/url"
@@ -18,6 +19,14 @@ import (
 
 var ErrNotThisAuth = errors.New("not this Auth method")
 var authMethod rbac.RBACInfo
+
+type authMethodKey struct{}
+
+// withAuthMethod records the method that authenticated r, so GetUser does not
+// depend on the process-wide authMethod set by concurrent requests.
+func withAuthMethod(r *http.Request, m rbac.RBACInfo) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), authMethodKey{}, m))
+}
 
 func StartAuth(handler http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -35,6 +44,7 @@ func StartAuth(handler http.Handler) http.Handler {
 		r, err := localmethod.CheckAuthorization(r)
 		if err == nil {
 			authMethod = localmethod.Localinfo{}
+			r = withAuthMethod(r, authMethod)
 			ok, err := checkRBAC(r)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -52,6 +62,7 @@ func StartAuth(handler http.Handler) http.Handler {
 			r, err = oidcmethod.CheckAuthorization(r)
 			if err == nil {
 				authMethod = oidcmethod.OIDC{}
+				r = withAuthMethod(r, authMethod)
 				ok, err := checkRBAC(r)
 				if err != nil {
 					http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -74,6 +85,9 @@ func StartAuth(handler http.Handler) http.Handler {
 }
 
 func GetUser(r *http.Request, getAds bool) (*rbac.User, error) {
+	if m, ok := r.Context().Value(authMethodKey{}).(rbac.RBACInfo); ok {
+		return m.GetUser(r, getAds)
+	}
 	return authMethod.GetUser(r, getAds)
 }
 
