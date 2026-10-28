@@ -152,11 +152,31 @@ func TestCallbackStateIsSingleUse(t *testing.T) {
 func TestCallbackConcurrentLoginsDoNotClobber(t *testing.T) {
 	stubExchange(t)
 	first, c1 := startLogin(t, "/theliv/one")
-	_, c2 := startLogin(t, "/theliv/two")
+	second, c2 := startLogin(t, "/theliv/two")
+	jar := append(c1, c2...)
+
 	rec := httptest.NewRecorder()
-	handleCallback(rec, callbackRequest(first, append(c1, c2...)), testHost)
+	handleCallback(rec, callbackRequest(first, jar), testHost)
 	if got := rec.Header().Get("Location"); got != testHost+"/theliv/one" {
-		t.Fatalf("Location = %q", got)
+		t.Fatalf("first Location = %q", got)
+	}
+	var remaining []*http.Cookie
+	for _, c := range jar {
+		deleted := false
+		for _, d := range rec.Result().Cookies() {
+			if d.Name == c.Name && d.MaxAge < 0 {
+				deleted = true
+			}
+		}
+		if !deleted {
+			remaining = append(remaining, c)
+		}
+	}
+
+	rec = httptest.NewRecorder()
+	handleCallback(rec, callbackRequest(second, remaining), testHost)
+	if got := rec.Header().Get("Location"); got != testHost+"/theliv/two" {
+		t.Fatalf("second Location = %q (status %d)", got, rec.Code)
 	}
 }
 

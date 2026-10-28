@@ -52,32 +52,27 @@ func newLoginState(w http.ResponseWriter, returnPath string, secure bool) (strin
 }
 
 // consumeLoginState checks the state query parameter against the cookie set
-// by newLoginState, clears all pending state cookies and returns the stored
-// return path.
+// by newLoginState, clears that cookie and returns the stored return path.
+// Other pending state cookies are left alone so parallel logins still complete.
 func consumeLoginState(w http.ResponseWriter, r *http.Request, secure bool) (string, error) {
 	state := r.URL.Query().Get("state")
-	var stored *http.Cookie
-	for _, c := range r.Cookies() {
-		if !strings.HasPrefix(c.Name, StateCookiePrefix) {
-			continue
-		}
-		if isValidStateNonce(state) && c.Name == StateCookiePrefix+state {
-			stored = c
-		}
-		http.SetCookie(w, &http.Cookie{
-			Name:     c.Name,
-			Value:    "",
-			Path:     "/",
-			MaxAge:   -1,
-			Expires:  time.Unix(0, 0),
-			Secure:   secure,
-			HttpOnly: true,
-			SameSite: http.SameSiteLaxMode,
-		})
-	}
-	if stored == nil {
+	if !isValidStateNonce(state) {
 		return "", ErrInvalidState
 	}
+	stored, err := r.Cookie(StateCookiePrefix + state)
+	if err != nil {
+		return "", ErrInvalidState
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     stored.Name,
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		Expires:  time.Unix(0, 0),
+		Secure:   secure,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
 	p, err := base64.RawURLEncoding.DecodeString(stored.Value)
 	if err != nil {
 		return "", ErrInvalidState
