@@ -42,9 +42,9 @@ var regionPattern = regexp.MustCompile(`^[a-z0-9-]+$`)
 
 // Values are written unquoted into TokenTemplate (YAML), so restrict them to
 // characters that stay a single plain scalar: base64 / JWT / bootstrap-token
-// characters, plus ':' when not leading or trailing.
+// characters, plus ':' when not leading or trailing (and never a bare '~').
 var caPattern = regexp.MustCompile(`^[A-Za-z0-9+/=]+$`)
-var tokenPattern = regexp.MustCompile(`^[A-Za-z0-9._+/=-]([A-Za-z0-9._~+/=:-]*[A-Za-z0-9._~+/=-])?$`)
+var tokenPattern = regexp.MustCompile(`^(?:[A-Za-z0-9._+/=-]|[A-Za-z0-9._~+/=-][A-Za-z0-9._~+/=:-]*[A-Za-z0-9._~+/=-])$`)
 
 // Overridable in tests.
 var (
