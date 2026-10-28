@@ -83,6 +83,7 @@ func TestValidateClusterURL(t *testing.T) {
 		{"allowed suffix", "https://ABC.gr7.us-east-1.eks.amazonaws.com", allowed, false},
 		{"allowed with port", "https://abc.hcp.eastus.azmk8s.io:443", allowed, false},
 		{"exact allowed host", "https://eks.amazonaws.com", allowed, false},
+		{"fqdn trailing dot", "https://api.eks.amazonaws.com./", allowed, false},
 		{"lookalike rejected", "https://evil-eks.amazonaws.com.attacker.io", allowed, true},
 		{"suffix without dot rejected", "https://attackereks.amazonaws.com", allowed, true},
 		{"internal host rejected", "https://169.254.169.254", allowed, true},
@@ -98,7 +99,7 @@ func TestValidateClusterURL(t *testing.T) {
 }
 
 func TestValidateClusterFields(t *testing.T) {
-	ok := service.ClusterBasic{Url: "https://abc.eks.amazonaws.com", CA: "Y2E=", Token: "tok", Account: "123456789012"}
+	ok := service.ClusterBasic{Url: "https://abc.eks.amazonaws.com", CA: "Y2E=", Token: "eyJhbGciOi.eyJpc3Mi.sig-_x", Account: "123456789012", Region: "us-east-1"}
 	if err := validateClusterFields(ok); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -109,6 +110,9 @@ func TestValidateClusterFields(t *testing.T) {
 		{Url: "https://abc.eks.amazonaws.com", Token: "tok\n    server: https://evil"},
 		{Url: "https://abc.eks.amazonaws.com", CA: "Y2E=\nusers:"},
 		{Url: "https://abc.eks.amazonaws.com", Account: `1", "role": "x`},
+		{Url: "https://abc.eks.amazonaws.com", Token: "!foo"},
+		{Url: "https://abc.eks.amazonaws.com", CA: "Y2E=:x"},
+		{Url: "https://abc.eks.amazonaws.com", Account: "123456789012", Region: `x", "role": "y`},
 		{Url: "http://abc.eks.amazonaws.com"},
 	}
 	for i, b := range bad {

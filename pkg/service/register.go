@@ -8,6 +8,7 @@ package service
 import (
 	"context"
 	"errors"
+	"regexp"
 	"strings"
 
 	invest "github.com/fidelity/theliv/internal/investigators"
@@ -56,6 +57,8 @@ var (
 	// ErrNoPrincipal is returned when the caller identity is unknown.
 	ErrNoPrincipal = errors.New("registering principal is unknown")
 )
+
+var regionPattern = regexp.MustCompile(`^[a-z0-9-]*$`)
 
 type ClusterBasic struct {
 	Url     string
@@ -109,6 +112,9 @@ func RegisterCluster(ctx context.Context, l *log.SugaredSlogLogger, basic Cluste
 		if urlSlice := strings.Split(basic.Url, "."); len(urlSlice) > 5 {
 			basic.Region = urlSlice[len(urlSlice)-4]
 		}
+		if !regionPattern.MatchString(basic.Region) {
+			basic.Region = ""
+		}
 
 		basicJson, err := invest.ExecGoTemplate(ctx, BasicTemplate, basic)
 		if err != nil {
@@ -123,33 +129,42 @@ func RegisterCluster(ctx context.Context, l *log.SugaredSlogLogger, basic Cluste
 	}
 	kvs[kubeconfKey] = value
 
-	owner, err := registerStore.Get(ctx, ownerKey)
-	if err != nil {
-		return err
-	}
+	// Retry only covers an override racing a concurrent first registration.
+	for attempt := 0; attempt < 3; attempt++ {
+		owner, err := registerStore.Get(ctx, ownerKey)
+		if err != nil {
+			return err
+		}
 
-	var absent []string
-	var equal map[string]string
-	switch {
-	case owner == nil && !override:
-		// New cluster: only succeeds if nothing is registered under this name.
-		absent = []string{ownerKey, kubeconfKey}
-		kvs[ownerKey] = principal
-	case owner == nil:
-		kvs[ownerKey] = principal
-	case string(owner) == principal || override:
-		// Keep the recorded owner; guard against a concurrent ownership change.
-		equal = map[string]string{ownerKey: string(owner)}
-	default:
-		return ErrClusterExists
-	}
+		var absent []string
+		var equal map[string]string
+		switch {
+		case owner == nil && !override:
+			// New cluster: only succeeds if nothing is registered under this name.
+			absent = []string{ownerKey, kubeconfKey}
+			kvs[ownerKey] = principal
+		case owner == nil:
+			// Override of an unowned (legacy) cluster.
+			absent = []string{ownerKey}
+			kvs[ownerKey] = principal
+		case string(owner) == principal || override:
+			// Keep the recorded owner; guard against a concurrent ownership change.
+			equal = map[string]string{ownerKey: string(owner)}
+			delete(kvs, ownerKey)
+		default:
+			return ErrClusterExists
+		}
 
-	ok, err := registerStore.PutAllIf(ctx, absent, equal, kvs)
-	if err != nil {
-		return err
+		ok, err := registerStore.PutAllIf(ctx, absent, equal, kvs)
+		if err != nil {
+			return err
+		}
+		if ok {
+			return nil
+		}
+		if !override {
+			return ErrClusterExists
+		}
 	}
-	if !ok {
-		return ErrClusterExists
-	}
-	return nil
+	return ErrClusterExists
 }

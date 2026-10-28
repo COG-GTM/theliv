@@ -122,3 +122,37 @@ func TestRegisterClusterRequiresPrincipal(t *testing.T) {
 	assert.ErrorIs(t, register(t, "https://x.eks.amazonaws.com", "", false), ErrNoPrincipal)
 	assert.Empty(t, m.data)
 }
+
+// racingStore lets a concurrent first registration commit between the
+// override's owner read and its write.
+type racingStore struct {
+	*memClusterStore
+	raced bool
+}
+
+func (s *racingStore) PutAllIf(ctx context.Context, absent []string, equal map[string]string, kvs map[string]string) (bool, error) {
+	if !s.raced {
+		s.raced = true
+		s.data[testOwnerKey] = "alice"
+		s.data[testKubeconfKey] = "alice-config"
+	}
+	return s.memClusterStore.PutAllIf(ctx, absent, equal, kvs)
+}
+
+func TestRegisterClusterOverrideDoesNotStealConcurrentOwner(t *testing.T) {
+	m := useMemStore(t)
+	rs := &racingStore{memClusterStore: m}
+	registerStore = rs
+
+	assert.NoError(t, register(t, "https://new.eks.amazonaws.com", "admin", true))
+	assert.Equal(t, "alice", m.data[testOwnerKey])
+	assert.Contains(t, m.data[testKubeconfKey], "https://new.eks.amazonaws.com")
+}
+
+func TestRegisterClusterSanitizesDerivedRegion(t *testing.T) {
+	m := useMemStore(t)
+	ctx := context.Background()
+	basic := ClusterBasic{Name: testCluster, Url: `https://a.b.c.d"x.e.f.g`, CA: "Y2E=", Token: "t", Account: "123456789012"}
+	assert.NoError(t, RegisterCluster(ctx, log.SWithContext(ctx), basic, "alice", false))
+	assert.NotContains(t, m.data[KeyPath+"eks/"+testCluster+BasicKey], `d"x`)
+}

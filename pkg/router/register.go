@@ -38,6 +38,12 @@ const RegisterAdminPath = "/admin/register/"
 
 var clusterNamePattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9_-]{0,61}[a-z0-9])?$`)
 var accountPattern = regexp.MustCompile(`^[0-9]{12}$`)
+var regionPattern = regexp.MustCompile(`^[a-z0-9-]+$`)
+
+// Values are written unquoted into TokenTemplate (YAML), so restrict them to
+// base64 / JWT / bootstrap-token characters.
+var caPattern = regexp.MustCompile(`^[A-Za-z0-9+/=]+$`)
+var tokenPattern = regexp.MustCompile(`^[A-Za-z0-9._~+/=-]+$`)
 
 // Overridable in tests.
 var (
@@ -154,8 +160,17 @@ func validateClusterFields(basic service.ClusterBasic) error {
 			return fmt.Errorf("cluster %s must not contain whitespace or control characters", field)
 		}
 	}
+	if basic.CA != "" && !caPattern.MatchString(basic.CA) {
+		return fmt.Errorf("cluster CA must be base64 encoded")
+	}
+	if basic.Token != "" && !tokenPattern.MatchString(basic.Token) {
+		return fmt.Errorf("cluster token contains invalid characters")
+	}
 	if basic.Account != "" && !accountPattern.MatchString(basic.Account) {
 		return fmt.Errorf("account must be a 12-digit AWS account id")
+	}
+	if basic.Region != "" && !regionPattern.MatchString(basic.Region) {
+		return fmt.Errorf("region contains invalid characters")
 	}
 	if basic.Url == "" {
 		return nil
@@ -181,9 +196,9 @@ func validateClusterURL(raw string, allowedHosts []string) error {
 	if len(allowedHosts) == 0 {
 		return nil
 	}
-	host := strings.ToLower(u.Hostname())
+	host := strings.TrimSuffix(strings.ToLower(u.Hostname()), ".")
 	for _, allowed := range allowedHosts {
-		allowed = strings.ToLower(strings.TrimPrefix(strings.TrimSpace(allowed), "."))
+		allowed = strings.ToLower(strings.Trim(strings.TrimSpace(allowed), "."))
 		if allowed != "" && (host == allowed || strings.HasSuffix(host, "."+allowed)) {
 			return nil
 		}
