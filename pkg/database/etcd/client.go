@@ -95,6 +95,59 @@ func Put(key string, value interface{}) error {
 	return PutStr(key, string(c))
 }
 
+// Marshall the value (struct) and put to etcd under a lease, so the key expires after ttl
+func PutWithTTL(ctx context.Context, key string, value interface{}, ttl time.Duration) error {
+	c, err := json.Marshal(value)
+	if err != nil {
+		log.SWithContext(ctx).Errorf("Failed to marshall %v\n", value)
+		return err
+	}
+	lease, err := client.Grant(ctx, int64(ttl/time.Second))
+	if err != nil {
+		log.SWithContext(ctx).Errorf("Failed to grant lease for %v, error is %v\n", key, err)
+		return err
+	}
+	if _, err = client.Put(ctx, key, string(c), clientv3.WithLease(lease.ID)); err != nil {
+		log.SWithContext(ctx).Errorf("Failed to put %v, error is %v\n", key, err)
+		return settleFailedLeasedPut(ctx, key, lease.ID, err)
+	}
+	return nil
+}
+
+// A failed Put may still have committed (e.g. the response timed out), so only
+// revoke the lease once a read confirms the key is not attached to it.
+func settleFailedLeasedPut(ctx context.Context, key string, leaseID clientv3.LeaseID, putErr error) error {
+	checkCtx, cancel := context.WithTimeout(context.Background(), dialTimeout)
+	defer cancel()
+	res, err := client.Get(checkCtx, key)
+	if err != nil {
+		log.SWithContext(ctx).Errorf("Failed to verify put of %v, keeping lease, error is %v\n", key, err)
+		return putErr
+	}
+	for _, kv := range res.Kvs {
+		if clientv3.LeaseID(kv.Lease) == leaseID {
+			log.SWithContext(ctx).Infof("Put of %v committed despite error %v\n", key, putErr)
+			return nil
+		}
+	}
+	revokeCtx, revokeCancel := context.WithTimeout(context.Background(), dialTimeout)
+	defer revokeCancel()
+	if _, err := client.Revoke(revokeCtx, leaseID); err != nil {
+		log.SWithContext(ctx).Errorf("Failed to revoke lease for %v, error is %v\n", key, err)
+	}
+	return putErr
+}
+
+// Count keys with prefix, without fetching keys or values
+func CountWithPrefix(ctx context.Context, prefix string) (int64, error) {
+	res, err := client.Get(ctx, prefix, clientv3.WithPrefix(), clientv3.WithCountOnly())
+	if err != nil {
+		log.SWithContext(ctx).Errorf("Failed to count keys with prefix %v, error is %v\n", prefix, err)
+		return 0, err
+	}
+	return res.Count, nil
+}
+
 // Get keys only with prefix
 func GetKeys(ctx context.Context, prefix string) ([]string, error) {
 	// client := newClient()
