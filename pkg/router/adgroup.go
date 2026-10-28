@@ -6,7 +6,10 @@
 package router
 
 import (
+	"errors"
+	"fmt"
 	"net/http"
+	"regexp"
 
 	"github.com/fidelity/theliv/pkg/service"
 	"github.com/go-chi/chi/v5"
@@ -18,6 +21,25 @@ const (
 	Added          = "Cluster/NS added to adgroups"
 	REMOVED        = "Cluster/NS removed from adgroups"
 )
+
+// Kubernetes namespace names are RFC 1123 labels.
+var namespacePattern = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$`)
+
+func validateNamespace(namespace string) error {
+	if !namespacePattern.MatchString(namespace) {
+		return fmt.Errorf("namespace must be a valid Kubernetes namespace name (lowercase alphanumeric or '-', max 63 characters)")
+	}
+	return nil
+}
+
+// Cluster and namespace are embedded in role grants, so they must be strictly
+// validated before any grant is built from them.
+func validateClusterNamespace(cluster, namespace string) error {
+	if err := validateClusterName(cluster); err != nil {
+		return err
+	}
+	return validateNamespace(namespace)
+}
 
 type AdGroups struct {
 	AdGroups []string `json:"adgroups"`
@@ -38,6 +60,10 @@ func AdGroup(r chi.Router) {
 func addGroup(w http.ResponseWriter, r *http.Request) {
 	cluster := chi.URLParam(r, "cluster")
 	namespace := chi.URLParam(r, "namespace")
+	if err := validateClusterNamespace(cluster, namespace); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	var adgroups AdGroups
 
@@ -50,6 +76,10 @@ func addGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := service.AddGroup(cluster, namespace, adgroups.AdGroups); err != nil {
+		if errors.Is(err, service.ErrInvalidGrant) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		http.Error(w, SERVICE_UNAVAILABLE, http.StatusServiceUnavailable)
 		return
 	}
@@ -64,6 +94,10 @@ func addGroup(w http.ResponseWriter, r *http.Request) {
 func removeGroup(w http.ResponseWriter, r *http.Request) {
 	cluster := chi.URLParam(r, "cluster")
 	namespace := chi.URLParam(r, "namespace")
+	if err := validateClusterNamespace(cluster, namespace); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	var ads AdGroups
 
