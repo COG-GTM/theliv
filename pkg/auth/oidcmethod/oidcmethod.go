@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/fidelity/theliv/internal/rbac"
@@ -24,6 +25,11 @@ import (
 const (
 	AccessTokenKey string = "access_token"
 	IDTokenKey     string = "id_token"
+
+	// sessionTTL bounds the lifetime of the Theliv session token and cookie.
+	sessionTTL = time.Hour
+	// sessionClockSkew tolerates small clock differences between replicas.
+	sessionClockSkew = time.Minute
 )
 
 var provider *oidc.Provider
@@ -31,6 +37,7 @@ var provider *oidc.Provider
 var oauthConfigs = make(map[string]*oauth2.Config)
 var jwtKey []byte
 var ErrNoIDFound = errors.New("no id token found")
+var ErrInvalidSession = errors.New("session token invalid or expired")
 
 type OIDC struct {
 }
@@ -84,7 +91,8 @@ func (OIDC) GetUser(r *http.Request, getAd bool) (*rbac.User, error) {
 
 func userFromToken(ctx context.Context, auth string) (*rbac.UserInfo, error) {
 	user := &rbac.UserInfo{}
-	token, err := jwt.ParseWithClaims(auth, user, func(t *jwt.Token) (interface{}, error) {
+	parser := jwt.NewParser(jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}))
+	token, err := parser.ParseWithClaims(auth, user, func(t *jwt.Token) (interface{}, error) {
 		return jwtKey, nil
 	})
 	if err != nil {
@@ -102,16 +110,55 @@ func userFromToken(ctx context.Context, auth string) (*rbac.UserInfo, error) {
 		log.SWithContext(ctx).Errorf("failed to validate token")
 		return nil, e
 	}
+	if e := validateSessionLifetime(c, time.Now()); e != nil {
+		log.SWithContext(ctx).Errorf("failed to validate token: %v", e)
+		return nil, e
+	}
 	return user, nil
 }
 
+// validateSessionLifetime requires iat/exp in Unix seconds describing a
+// session no longer than sessionTTL. Tokens without an expiry, or with an
+// expiry far in the future (e.g. legacy tokens whose exp was written in
+// milliseconds), are rejected.
+func validateSessionLifetime(c *rbac.UserInfo, now time.Time) error {
+	if c.ExpiresAt == 0 || c.IssuedAt == 0 {
+		return fmt.Errorf("%w: missing exp or iat", ErrInvalidSession)
+	}
+	ttl := int64(sessionTTL / time.Second)
+	skew := int64(sessionClockSkew / time.Second)
+	t := now.Unix()
+	if c.ExpiresAt <= t {
+		return fmt.Errorf("%w: token expired", ErrInvalidSession)
+	}
+	if c.IssuedAt > t+skew {
+		return fmt.Errorf("%w: token issued in the future", ErrInvalidSession)
+	}
+	if c.ExpiresAt-c.IssuedAt > ttl || c.ExpiresAt > t+ttl+skew {
+		return fmt.Errorf("%w: token lifetime exceeds %v", ErrInvalidSession, sessionTTL)
+	}
+	return nil
+}
+
 func CheckAuthorization(r *http.Request) (*http.Request, error) {
+	found := false
 	for _, cookie := range r.Cookies() {
 		if strings.HasPrefix(cookie.Name, IDTokenKey) {
-			return r, nil
+			found = true
+			break
 		}
 	}
-	return r, ErrNoIDFound
+	if !found {
+		return r, ErrNoIDFound
+	}
+	c, err := joinCookies(r.Context(), IDTokenKey, r.Cookies())
+	if err != nil {
+		return r, ErrInvalidSession
+	}
+	if _, err := userFromToken(r.Context(), c); err != nil {
+		return r, ErrInvalidSession
+	}
+	return r, nil
 }
 
 func HandleStartAuthFlow(w http.ResponseWriter, r *http.Request) {

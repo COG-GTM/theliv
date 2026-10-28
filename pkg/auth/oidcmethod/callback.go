@@ -9,6 +9,7 @@ import (
 	"context"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/fidelity/theliv/internal/rbac"
@@ -70,9 +71,7 @@ func ExchangeToken(w http.ResponseWriter, r *http.Request) error {
 	// user id
 	user := rbac.UserInfo{}
 	user.Email = thelivUser.Email
-	if thelivUser.ExpiresAt != nil {
-		user.ExpiresAt = thelivUser.ExpiresAt.UnixMilli()
-	}
+	setSessionExpiry(&user, thelivUser.ExpiresAt, time.Now())
 	user.FamilyName = thelivUser.Surname
 	user.GivenName = thelivUser.GivenName
 	user.Issuer = thelivUser.Issuer
@@ -141,6 +140,17 @@ func userJwt(ctx context.Context, user *rbac.UserInfo) (string, error) {
 		return "", theliverr.NewCommonError(ctx, 1, msg)
 	}
 	return jwt, nil
+}
+
+// setSessionExpiry stamps the session token with iat/exp in Unix seconds.
+// The session lasts sessionTTL, or less if the IdP token expires sooner.
+func setSessionExpiry(user *rbac.UserInfo, idpExpiry *jwt.NumericDate, now time.Time) {
+	exp := now.Add(sessionTTL)
+	if idpExpiry != nil && idpExpiry.Time.Before(exp) {
+		exp = idpExpiry.Time
+	}
+	user.IssuedAt = now.Unix()
+	user.ExpiresAt = exp.Unix()
 }
 
 var verify = func(ctx context.Context, rawIDToken string) (*oidc.IDToken, error) {
