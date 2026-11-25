@@ -8,6 +8,7 @@ package k8s
 import (
 	"context"
 	"strings"
+	"sync"
 
 	com "github.com/fidelity/theliv/pkg/common"
 	"github.com/fidelity/theliv/pkg/kubeclient"
@@ -18,6 +19,20 @@ import (
 
 type K8sEventRetriever struct {
 	kubeclient *kubeclient.KubeClient
+	lists      *eventListCache
+}
+
+// eventListCache shares one namespace event List between the concurrent
+// GetEvents calls made through a single retriever (one detector request).
+type eventListCache struct {
+	mu      sync.Mutex
+	entries map[string]*eventListEntry
+}
+
+type eventListEntry struct {
+	done   chan struct{}
+	events *v1.EventList
+	err    error
 }
 
 type K8sEventDataRef struct {
@@ -51,9 +66,7 @@ func (dataRef K8sEventDataRef) GetEvents(ctx context.Context) ([]observability.E
 		namespace = kubeclient.NamespacedName{Namespace: data}
 	}
 
-	events := &v1.EventList{}
-	eventsOptions := metav1.ListOptions{}
-	dataRef.kubeclient.List(ctx, events, namespace, eventsOptions)
+	events := dataRef.listEvents(ctx, namespace)
 
 	for _, event := range events.Items {
 		if strings.Contains(event.InvolvedObject.Name, name) || strings.Contains(event.Message, name) {
@@ -73,6 +86,41 @@ func (dataRef K8sEventDataRef) GetEvents(ctx context.Context) ([]observability.E
 	}
 	return eventRecord, nil
 
+}
+
+// listEvents returns the namespace's events. Concurrent callers on the same
+// retriever share one List; a failed List is not kept, so the next caller
+// retries it, as each caller did before.
+func (eventReceiver K8sEventRetriever) listEvents(ctx context.Context, namespace kubeclient.NamespacedName) *v1.EventList {
+	if eventReceiver.lists == nil {
+		events := &v1.EventList{}
+		eventReceiver.kubeclient.List(ctx, events, namespace, metav1.ListOptions{})
+		return events
+	}
+	c := eventReceiver.lists
+	for {
+		c.mu.Lock()
+		if e, ok := c.entries[namespace.Namespace]; ok {
+			c.mu.Unlock()
+			<-e.done
+			if e.err == nil {
+				return e.events
+			}
+			continue
+		}
+		e := &eventListEntry{done: make(chan struct{}), events: &v1.EventList{}}
+		c.entries[namespace.Namespace] = e
+		c.mu.Unlock()
+
+		e.err = eventReceiver.kubeclient.List(ctx, e.events, namespace, metav1.ListOptions{})
+		if e.err != nil {
+			c.mu.Lock()
+			delete(c.entries, namespace.Namespace)
+			c.mu.Unlock()
+		}
+		close(e.done)
+		return e.events
+	}
 }
 
 // Get Info from event.EventSource, returns map[string]string.
@@ -100,7 +148,7 @@ func (eventReceiver K8sEventRetriever) AddFilters(name string, namespace string)
 
 // New for K8sEventRetriever.
 func NewK8sEventRetriever(kubeclient *kubeclient.KubeClient) K8sEventRetriever {
-	return K8sEventRetriever{kubeclient}
+	return K8sEventRetriever{kubeclient, &eventListCache{entries: map[string]*eventListEntry{}}}
 }
 
 func initMap() map[string]string {
