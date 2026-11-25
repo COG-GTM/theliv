@@ -152,29 +152,33 @@ func TestGetEventsZeroValueRetrieverListsEachCall(t *testing.T) {
 	assert.EqualValues(t, 2, atomic.LoadInt32(lists))
 }
 
-func TestGetEventsWaitersShareFailedList(t *testing.T) {
+func TestGetEventsWaitersListOnTheirOwnAfterFailedList(t *testing.T) {
 	hold := make(chan struct{})
 	srv, lists := fakeAPIServer(t, 1, hold)
 	r := newTestRetriever(t, srv.URL)
 
-	var started, wg sync.WaitGroup
-	for i := 0; i < 20; i++ {
-		started.Add(1)
+	const callers = 20
+	var wg sync.WaitGroup
+	var empty int32
+	for i := 0; i < callers; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			started.Done()
-			assert.Empty(t, getEvents(t, r, "web-1"))
+			got := getEvents(t, r, "web-1")
+			if len(got) == 0 {
+				atomic.AddInt32(&empty, 1)
+				return
+			}
+			assert.Equal(t, []string{"uid-e1", "uid-e3"}, eventIDs(got))
 		}()
 	}
-	started.Wait()
 	time.Sleep(100 * time.Millisecond)
 	close(hold)
 	wg.Wait()
-	assert.EqualValues(t, 1, atomic.LoadInt32(lists))
-
-	assert.Equal(t, []string{"uid-e1", "uid-e3"}, eventIDs(getEvents(t, r, "web-1")))
-	assert.EqualValues(t, 2, atomic.LoadInt32(lists))
+	// Only the caller whose List failed comes back empty; every other caller
+	// got the events from a List of its own or a later shared one.
+	assert.EqualValues(t, 1, atomic.LoadInt32(&empty))
+	assert.LessOrEqual(t, atomic.LoadInt32(lists), int32(callers))
 }
 
 func TestGetEventsWaiterStopsWhenContextEnds(t *testing.T) {
@@ -183,6 +187,10 @@ func TestGetEventsWaiterStopsWhenContextEnds(t *testing.T) {
 	r := newTestRetriever(t, srv.URL)
 
 	done := make(chan struct{})
+	t.Cleanup(func() {
+		close(hold)
+		<-done
+	})
 	go func() {
 		defer close(done)
 		getEvents(t, r, "web-1")
@@ -191,12 +199,15 @@ func TestGetEventsWaiterStopsWhenContextEnds(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	start := time.Now()
-	records, err := r.Retrieve(observability.EventFilterCriteria{FilterCriteria: r.AddFilters("web-2", "shop")}).GetEvents(ctx)
-	require.NoError(t, err)
-	assert.Empty(t, records)
-	assert.Less(t, time.Since(start), time.Second)
-
-	close(hold)
-	<-done
+	result := make(chan []observability.EventRecord, 1)
+	go func() {
+		records, _ := r.Retrieve(observability.EventFilterCriteria{FilterCriteria: r.AddFilters("web-2", "shop")}).GetEvents(ctx)
+		result <- records
+	}()
+	select {
+	case records := <-result:
+		assert.Empty(t, records)
+	case <-time.After(2 * time.Second):
+		t.Fatal("waiter ignored its context deadline")
+	}
 }

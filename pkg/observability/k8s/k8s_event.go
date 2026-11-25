@@ -89,10 +89,9 @@ func (dataRef K8sEventDataRef) GetEvents(ctx context.Context) ([]observability.E
 }
 
 // listEvents returns the namespace's events. Callers on the same retriever
-// share one List per namespace. Callers waiting on a List that fails get an
-// empty list, as their own failed List would have given them; the failed List
-// is not kept, so a later caller lists again. A waiter whose ctx ends stops
-// waiting.
+// share one List per namespace. If that List fails, it is not kept and each
+// caller that waited on it lists on its own, as every caller did before. A
+// waiter whose ctx ends stops waiting.
 func (eventReceiver K8sEventRetriever) listEvents(ctx context.Context, namespace kubeclient.NamespacedName) *v1.EventList {
 	if eventReceiver.lists == nil {
 		events := &v1.EventList{}
@@ -109,7 +108,9 @@ func (eventReceiver K8sEventRetriever) listEvents(ctx context.Context, namespace
 			return &v1.EventList{}
 		}
 		if e.err != nil {
-			return &v1.EventList{}
+			events := &v1.EventList{}
+			eventReceiver.kubeclient.List(ctx, events, namespace, metav1.ListOptions{})
+			return events
 		}
 		return e.events
 	}
