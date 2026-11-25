@@ -16,6 +16,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/fidelity/theliv/pkg/config"
 	"github.com/fidelity/theliv/pkg/kubeclient"
@@ -29,7 +30,8 @@ import (
 )
 
 // fakeAPIServer serves just enough discovery and an events list for namespace "shop".
-func fakeAPIServer(t *testing.T, failFirstLists int32) (*httptest.Server, *int32) {
+// When hold is given, each events List waits until hold is closed.
+func fakeAPIServer(t *testing.T, failFirstLists int32, hold ...chan struct{}) (*httptest.Server, *int32) {
 	var lists int32
 	events := v1.EventList{TypeMeta: metav1.TypeMeta{Kind: "EventList", APIVersion: "v1"}}
 	for _, e := range []struct{ name, obj, msg string }{
@@ -59,6 +61,9 @@ func fakeAPIServer(t *testing.T, failFirstLists int32) (*httptest.Server, *int32
 				GroupVersion: "v1",
 				APIResources: []metav1.APIResource{{Name: "events", Namespaced: true, Kind: "Event", Verbs: []string{"list"}}}})
 		case "/api/v1/namespaces/shop/events":
+			if len(hold) > 0 {
+				<-hold[0]
+			}
 			if n := atomic.AddInt32(&lists, 1); n <= failFirstLists {
 				http.Error(w, "unavailable", http.StatusServiceUnavailable)
 				return
@@ -145,4 +150,53 @@ func TestGetEventsZeroValueRetrieverListsEachCall(t *testing.T) {
 	assert.Equal(t, []string{"uid-e1", "uid-e3"}, eventIDs(getEvents(t, r, "web-1")))
 	assert.Equal(t, []string{"uid-e2"}, eventIDs(getEvents(t, r, "web-2")))
 	assert.EqualValues(t, 2, atomic.LoadInt32(lists))
+}
+
+func TestGetEventsWaitersShareFailedList(t *testing.T) {
+	hold := make(chan struct{})
+	srv, lists := fakeAPIServer(t, 1, hold)
+	r := newTestRetriever(t, srv.URL)
+
+	var started, wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		started.Add(1)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			started.Done()
+			assert.Empty(t, getEvents(t, r, "web-1"))
+		}()
+	}
+	started.Wait()
+	time.Sleep(100 * time.Millisecond)
+	close(hold)
+	wg.Wait()
+	assert.EqualValues(t, 1, atomic.LoadInt32(lists))
+
+	assert.Equal(t, []string{"uid-e1", "uid-e3"}, eventIDs(getEvents(t, r, "web-1")))
+	assert.EqualValues(t, 2, atomic.LoadInt32(lists))
+}
+
+func TestGetEventsWaiterStopsWhenContextEnds(t *testing.T) {
+	hold := make(chan struct{})
+	srv, _ := fakeAPIServer(t, 0, hold)
+	r := newTestRetriever(t, srv.URL)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		getEvents(t, r, "web-1")
+	}()
+	time.Sleep(100 * time.Millisecond)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	records, err := r.Retrieve(observability.EventFilterCriteria{FilterCriteria: r.AddFilters("web-2", "shop")}).GetEvents(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, records)
+	assert.Less(t, time.Since(start), time.Second)
+
+	close(hold)
+	<-done
 }
