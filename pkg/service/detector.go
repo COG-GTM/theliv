@@ -74,6 +74,10 @@ func DetectAlerts(ctx context.Context) (interface{}, error) {
 	input.EventRetriever = eventRetriever
 
 	ingress := getUnhealthyIngress(ctx, input)
+	// New retriever for the investigators: it lists events when they first ask,
+	// after alerts and affected resources load, and the ingress scan's list can
+	// be freed.
+	input.EventRetriever = k8s.NewK8sEventRetriever(client)
 	alerts, err := prometheus.GetAlerts(ctx, input)
 	if err != nil {
 		return nil, theErr.NewCommonError(ctx, 6, com.PrometheusNotAvailable+contact)
